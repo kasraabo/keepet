@@ -12,7 +12,7 @@ import (
 
 func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	svc := service(r.PathValue("service"))
-	if svc.ID == "" {
+	if svc.ID == "" || !a.enabled(r.Context(), "service", svc.ID) {
 		a.fail(w, r, "خدمت نامعتبر", 404)
 		return
 	}
@@ -29,6 +29,9 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/booking/"+id)
 }
 func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
+	if !a.enabled(ctx, "service", b.Service) || (b.Service != "vet" && !a.enabled(ctx, "area", b.Area)) {
+		return nil, nil
+	}
 	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) ORDER BY a.day,a.period`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
 	if err != nil {
 		return nil, err
@@ -112,7 +115,12 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		if b.Service == "vet" {
 			b.Answers = map[string]string{}
 			symptom := r.FormValue("symptom")
-			for _, q := range a.Triage {
+			qs := a.questions(r.Context())
+			if len(qs) == 0 {
+				bad("پرسشنامه در دسترس نیست؛ دوباره تلاش کنید.")
+				return
+			}
+			for _, q := range qs {
 				if q.When != "" && !contains(strings.Split(q.When, ","), symptom) {
 					continue
 				}
@@ -152,7 +160,7 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		}
 		b.Area = r.FormValue("area")
 		b.Address = strings.TrimSpace(r.FormValue("address"))
-		if b.Service != "vet" && (areaName(b.Area) == "خارج از پوشش" || len(b.Address) < 10) {
+		if b.Service != "vet" && (!a.enabled(r.Context(), "area", b.Area) || len(b.Address) < 10) {
 			bad("محلهٔ تحت پوشش و آدرس کامل لازم است.")
 			return
 		}
@@ -211,6 +219,9 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/booking/"+b.ID)
 }
 func (a *App) price(ctx context.Context, b Booking) (int64, error) {
+	if !a.enabled(ctx, "service", b.Service) {
+		return 0, fmt.Errorf("خدمت غیرفعال است")
+	}
 	switch b.Service {
 	case "vet":
 		var price int64
@@ -225,7 +236,7 @@ func (a *App) price(ctx context.Context, b Booking) (int64, error) {
 			}
 			seen[id] = true
 			found := false
-			for _, m := range GroomMenu {
+			for _, m := range a.liveMenu(ctx, "grooming") {
 				if id == m.ID {
 					total += m.Price
 					found = true
@@ -240,7 +251,7 @@ func (a *App) price(ctx context.Context, b Booking) (int64, error) {
 		}
 		return total, nil
 	case "sampling":
-		for _, s := range Samples {
+		for _, s := range a.liveMenu(ctx, "sampling") {
 			if s.ID == b.Sample {
 				return s.Price, nil
 			}
@@ -276,6 +287,24 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, noticeURL("/booking/"+b.ID, "پرداخت آزمایشی ناموفق بود؛ می‌توانید دوباره تلاش کنید."))
 		return
 	}
+	// Keep prices, commission, coverage and provider eligibility stable through payment.
+	lockRows, lockErr := tx.Query(ctx, "SELECT id FROM business_config WHERE kind IN ('service','area','grooming','sampling') ORDER BY kind,id FOR SHARE")
+	if lockErr != nil {
+		a.fail(w, r, "تنظیمات پرداخت در دسترس نیست", 503)
+		return
+	}
+	for lockRows.Next() {
+	}
+	lockErr = lockRows.Err()
+	lockRows.Close()
+	if lockErr == nil {
+		var provider string
+		lockErr = tx.QueryRow(ctx, "SELECT id FROM providers WHERE id=$1 FOR SHARE", b.ProviderID).Scan(&provider)
+	}
+	if lockErr != nil {
+		a.fail(w, r, "ارائه‌دهنده در دسترس نیست", 409)
+		return
+	}
 	var capacity int
 	var providerID, day, prd string
 	err = tx.QueryRow(ctx, "SELECT capacity,provider_id,day::text,period FROM availability WHERE id=$1 FOR UPDATE", b.AvailabilityID).Scan(&capacity, &providerID, &day, &prd)
@@ -293,7 +322,7 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ظرفیت یا قیمت تغییر کرده است؛ به مرحلهٔ انتخاب بازه برگردید.", 409)
 		return
 	}
-	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status='paid',paid_at=now() WHERE id=$1", b.ID)
+	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status='paid',paid_at=now(),commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID)
 	if err == nil {
 		err = addEvent(ctx, tx, b.ID, sess(r).User.ID, "paid", "پرداخت آزمایشی ثبت شد؛ درخواست در صف هماهنگی عملیات است.")
 	}

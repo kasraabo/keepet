@@ -10,16 +10,16 @@
 
 ۲. فایل Docker.dmg را باز کنید، Docker را به Applications بکشید و از Applications باز کنید. مراحل اولیه را انجام دهید و منتظر آماده‌شدن Docker بمانید.
 
-۳. فایل keepet-mac.zip را در Downloads دانلود و با دوبار کلیک باز کنید. پوشهٔ keepet شامل تمام فایل‌های لازم پروژه است. نیازی به نصب جداگانهٔ Go یا PostgreSQL، خرید سرور یا کلون مخزن نیست.
+۳. فایل [keepet-main.zip](https://github.com/kasraabo/keepet/archive/refs/heads/main.zip) را در Downloads دانلود و با دوبار کلیک باز کنید. پوشهٔ keepet-main شامل تمام فایل‌های لازم پروژه است. نیازی به نصب جداگانهٔ Go یا PostgreSQL، خرید سرور یا کلون مخزن نیست.
 
 ۴. Terminal را با Spotlight باز و اجرا کنید:
 
 ```bash
-cd "$HOME/Downloads/keepet"
+cd "$HOME/Downloads/keepet-main"
 docker compose up --build
 ```
 
-اگر پوشه جای دیگری است، `cd ` را تایپ کنید، پوشهٔ keepet را از Finder داخل Terminal بکشید و Enter بزنید؛ سپس دستور docker compose را اجرا کنید. این پوشه باید فایل compose.yaml داشته باشد. اولین اجرا اینترنت می‌خواهد و چند دقیقه زمان می‌برد.
+اگر پوشه جای دیگری است، `cd ` را تایپ کنید، پوشهٔ keepet-main را از Finder داخل Terminal بکشید و Enter بزنید؛ سپس دستور docker compose را اجرا کنید. این پوشه باید فایل compose.yaml داشته باشد. اولین اجرا اینترنت می‌خواهد و چند دقیقه زمان می‌برد.
 
 ۵. وقتی پیام `Keepet development server on :8080` نمایش داده شد، در Safari یا Chrome آدرس زیر را وارد کنید:
 
@@ -38,7 +38,7 @@ http://localhost:8080
 برای توقف در همان Terminal، Control+C بزنید؛ برای ادامه بعداً:
 
 ```bash
-cd "$HOME/Downloads/keepet"
+cd "$HOME/Downloads/keepet-main"
 docker compose up
 ```
 
@@ -52,3 +52,19 @@ docker compose up
 - خطای دانلود image/module: متن دقیق خطا را بفرستید؛ بررسی TLS یا checksum را خاموش نکنید.
 
 این بسته نسخهٔ توسعه است؛ برای کار واقعی عمومی باید اتصال‌ها و مراحل سخت‌سازی تکمیل شوند. جزئیات قابلیت‌ها و مراحل بعدی در README.md و docs/roadmap.md است.
+
+
+## پنل مدیریت کسب‌وکار
+
+در سایت از حساب فعلی خارج شوید و با شمارهٔ `09120000005` و کد نمایش‌داده‌شده وارد شوید. سپس `http://localhost:8080/admin` را باز کنید. راهنمای قابلیت‌ها در [مدیریت کسب‌وکار](docs/business-admin.md) است.
+
+## به‌روزرسانی نسخهٔ قبلی بدون حذف اطلاعات
+
+Docker Desktop را باز نگه دارید. در Terminal قبلی Control+C بزنید. از Downloads فایل ZIP تازهٔ مخزن را دانلود و باز کنید. Finder ممکن است نام پوشه را `keepet-main 2` بگذارد. محتویات پوشهٔ تازه را در پوشهٔ قبلی `keepet-main` کپی کنید و جایگزینی فایل‌ها را بپذیرید. نام پوشهٔ اصلی را عوض نکنید تا volume دیتابیس همان قبلی بماند. سپس عیناً اجرا کنید:
+
+```bash
+cd "$HOME/Downloads/keepet-main"
+docker compose up --build
+```
+
+مهاجرت پنل خودکار اجرا می‌شود و رزروهای قبلی حفظ می‌شوند. اگر `auth.docker.io` timeout داد، دسترسی شبکهٔ Docker به Docker Hub را برقرار کنید و همین دستور را دوباره اجرا کنید.

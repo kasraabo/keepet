@@ -81,7 +81,10 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"money": money, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"money": money, "providerOriginal": func(p Provider) string {
+		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
+		return string(b)
+	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
 		if t == nil {
 			return ""
 		}
@@ -150,7 +153,7 @@ func (a *App) seed(ctx context.Context) error {
 			}
 		}
 	}
-	return nil
+	return a.seedBusiness(ctx)
 }
 
 type key int
@@ -253,12 +256,20 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /support", a.support)
 	m.HandleFunc("POST /support", a.ticket)
 	m.HandleFunc("GET /admin", a.admin)
+	m.HandleFunc("GET /admin/{section}", a.admin)
+	m.HandleFunc("POST /admin/{kind}/{id}", a.businessSave)
+	m.HandleFunc("POST /admin/payout/{id}", a.businessPayout)
+	m.HandleFunc("GET /admin/export.csv", a.businessExport)
+	m.HandleFunc("GET /magazine/{slug}", a.article)
+	m.HandleFunc("POST /provider/articles/{id}/review", a.reviewArticle)
 	m.HandleFunc("GET /pages/{slug}", a.publicPage)
 	return a.middleware(m)
 }
 func (a *App) page(r *http.Request, title string) Page {
 	s := sess(r)
-	return Page{Questions: a.Triage, Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
+	p := Page{Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
+	a.livePage(r.Context(), &p)
+	return p
 }
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -311,11 +322,16 @@ func (a *App) home(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) landing(w http.ResponseWriter, r *http.Request) {
 	s := service(r.PathValue("service"))
-	if s.ID == "" {
+	if s.ID == "" || !a.enabled(r.Context(), "service", s.ID) {
 		a.fail(w, r, "خدمت پیدا نشد.", 404)
 		return
 	}
 	p := a.page(r, s.Name)
+	for _, live := range p.Services {
+		if live.ID == s.ID {
+			s = live
+		}
+	}
 	p.Service = s
 	p.Providers, _ = a.providers(r.Context(), s.ID)
 	a.render(w, r, "landing", p)

@@ -212,6 +212,16 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 		}
 		rows.Close()
 	}
+	var qualified bool
+	a.DB.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM providers WHERE user_id=$1 AND service='vet' AND active AND verified)", p.User.ID).Scan(&qualified)
+	if qualified {
+		rs, _ := a.records(r.Context(), "article")
+		for _, v := range rs {
+			if v.Data.ReviewedBy == "" {
+				p.Posts = append(p.Posts, v)
+			}
+		}
+	}
 	a.render(w, r, "provider", p)
 }
 func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
@@ -361,14 +371,4 @@ func (a *App) applicationDecision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	redirect(w, r, "/ops")
-}
-func (a *App) admin(w http.ResponseWriter, r *http.Request) {
-	if !a.auth(w, r, "admin") {
-		return
-	}
-	p := a.page(r, "مدیریت کسب‌وکار")
-	a.DB.QueryRow(r.Context(), "SELECT count(*),COALESCE(sum(amount),0) FROM bookings WHERE payment_status='paid'").Scan(&p.Count, &p.Total)
-	p.Bookings, _ = a.bookings(r.Context(), "payment_status='paid'")
-	p.Providers, _ = a.providers(r.Context(), "")
-	a.render(w, r, "admin", p)
 }

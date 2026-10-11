@@ -74,6 +74,11 @@ type Application struct {
 }
 type Ticket struct{ ID, Subject, Body, Reply, Status string }
 type Page struct {
+	Posts []BusinessRecord
+
+	Business *BusinessPage
+	Banners  []BusinessRecord
+
 	Questions                                                  []Question
 	Title, Path, CSRF, Error, Notice, Next, Challenge, DevCode string
 	User                                                       *User
