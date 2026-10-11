@@ -1,4 +1,4 @@
-const CACHE='keepet-static-v1';
+const CACHE='keepet-static-v2';
 const ASSETS=['/static/style.css','/static/app.js','/static/icon.svg','/static/pets.svg','/static/vendor/Vazirmatn-Regular.woff2','/static/vendor/Vazirmatn-Bold.woff2','/static/vendor/htmx.min.js','/static/vendor/alpine.min.js','/static/offline.html'];
 self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});

@@ -46,6 +46,9 @@ type BusinessAudit struct {
 	At                                 time.Time
 }
 type BusinessPage struct {
+	Integrations []IntegrationView
+	Report       *ManagementReport
+
 	Section, Search                                           string
 	Records                                                   []BusinessRecord
 	AllProviders                                              []Provider
@@ -88,6 +91,9 @@ func (a *App) seedBusiness(ctx context.Context) error {
 				return e
 			}
 		}
+	}
+	if e := a.seedIntegrations(ctx); e != nil {
+		return e
 	}
 	return put("triage", "vet", BusinessData{Questions: a.Triage, Enabled: true})
 }
@@ -183,7 +189,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 	if section == "" {
 		section = "overview"
 	}
-	if !contains([]string{"overview", "catalog", "supply", "finance", "customers", "triage", "content", "audit"}, section) {
+	if !contains([]string{"overview", "catalog", "supply", "finance", "customers", "triage", "content", "audit", "reports", "integrations"}, section) {
 		a.fail(w, r, "بخش پیدا نشد", 404)
 		return
 	}
@@ -191,6 +197,23 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 	b := &BusinessPage{Section: section, Search: strings.TrimSpace(r.URL.Query().Get("q"))}
 	p.Business = b
 	p.Next = "item-" + token()[:12]
+	if section == "overview" || section == "reports" {
+		var err error
+		b.Report, err = a.loadReport(r.Context(), r)
+		if err != nil {
+			a.fail(w, r, "بازهٔ گزارش نامعتبر است؛ حداکثر یک سال تا امروز انتخاب کنید", 400)
+			return
+		}
+	}
+	if section == "integrations" {
+		var err error
+		b.Integrations, err = a.integrationViews(r.Context())
+		if err != nil {
+			a.fail(w, r, "خواندن تنظیمات سرویس‌ها ناموفق بود", 500)
+			return
+		}
+	}
+
 	ctx := r.Context()
 	var e error
 	b.Records, e = a.records(ctx, "")
@@ -516,7 +539,7 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ذخیره نشد؛ دوباره تلاش کنید", 500)
 		return
 	}
-	redirect(w, r, noticeURL("/admin/"+section, "تغییرات ذخیره شد و در محصول اعمال می‌شود."))
+	redirect(w, r, noticeURL("/management/"+section, "تغییرات ذخیره شد و در محصول اعمال می‌شود."))
 }
 func (a *App) businessPayout(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "admin") {
@@ -557,7 +580,7 @@ func (a *App) businessPayout(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "تسویه ذخیره نشد", 500)
 		return
 	}
-	redirect(w, r, noticeURL("/admin/finance", "ثبت تسویهٔ آزمایشی انجام شد؛ پولی منتقل نشده است."))
+	redirect(w, r, noticeURL("/management/finance", "ثبت تسویهٔ آزمایشی انجام شد؛ پولی منتقل نشده است."))
 }
 func csvSafe(s string) string {
 	if strings.ContainsAny(strings.TrimLeft(s, " \t\r\n")[:min(1, len(strings.TrimLeft(s, " \t\r\n")))], "=+-@") {

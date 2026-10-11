@@ -76,6 +76,13 @@ type Application struct {
 }
 type Ticket struct{ ID, Subject, Body, Reply, Status string }
 type Page struct {
+	OTPResend int
+
+	IsManagement bool
+
+	CodeDigits int
+	CodeTTL    int
+
 	Posts []BusinessRecord
 
 	Business *BusinessPage

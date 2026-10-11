@@ -6,3 +6,5 @@ export GOMODCACHE=/workspace/.cache/go-mod
 export APP_MODE=development
 export DATABASE_URL="${DATABASE_URL:-postgres://keepet:keepet_local_only@127.0.0.1:5432/keepet?sslmode=disable}"
 export PORT="${PORT:-8080}"
+
+export SETTINGS_KEY_FILE="${SETTINGS_KEY_FILE:-/workspace/.cache/keepet/settings.key}"

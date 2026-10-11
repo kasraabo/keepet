@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -23,15 +24,16 @@ func safeNext(s string) string {
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "ورود به کیپت")
 	p.Next = safeNext(r.URL.Query().Get("next"))
-	a.render(w, r, "login", p)
+	a.renderAuth(w, r, "login", p)
 }
 func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "کد ورود")
 	p.Next = safeNext(r.FormValue("next"))
+	policy := a.otpPolicy(r.Context())
 	phone := normalize(r.FormValue("phone"))
 	if !phoneRE.MatchString(phone) {
 		p.Error = "شمارهٔ موبایل را به صورت ۰۹۱۲۱۲۳۴۵۶۷ وارد کنید."
-		a.render(w, r, "login", p)
+		a.renderAuth(w, r, "login", p)
 		return
 	}
 	ctx := r.Context()
@@ -58,19 +60,19 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tx.QueryRow(r.Context(), "SELECT count(*) FROM otp_challenges WHERE session_token=$1 AND created_at>now()-interval '1 hour'", sess(r).Token).Scan(&sessionCount)
-	if count >= 5 || sessionCount >= 10 || last != nil && time.Since(*last) < 30*time.Second {
-		p.Error = "برای ارسال دوباره کمی صبر کنید. حداکثر ۵ کد در ساعت مجاز است."
-		a.render(w, r, "login", p)
+	if count >= policy.Hourly || sessionCount >= 10 || last != nil && time.Since(*last) < time.Duration(policy.Resend)*time.Second {
+		p.Error = "برای ارسال دوباره کمی صبر کنید. حداکثر " + digits(fmt.Sprint(policy.Hourly)) + " کد در ساعت مجاز است."
+		a.renderAuth(w, r, "login", p)
 		return
 	}
-	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	n, err := rand.Int(rand.Reader, big.NewInt(int64(math.Pow10(policy.Digits))))
 	if err != nil {
 		a.fail(w, r, "خطای ایجاد کد", 500)
 		return
 	}
-	p.DevCode = fmt.Sprintf("%06d", n.Int64())
+	p.DevCode = fmt.Sprintf("%0*d", policy.Digits, n.Int64())
 	p.Challenge = token()
-	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at) VALUES($1,$2,$3,$4,$5)", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(2*time.Minute))
+	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at,max_attempts,code_digits) VALUES($1,$2,$3,$4,$5,$6,$7)", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(time.Duration(policy.TTL)*time.Second), policy.Attempts, policy.Digits)
 	if err != nil {
 		a.fail(w, r, "ذخیرهٔ کد ورود انجام نشد", 500)
 		return
@@ -80,7 +82,7 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.render(w, r, "otp", p)
+	a.renderAuth(w, r, "otp", p)
 }
 func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "تأیید ورود")
@@ -94,20 +96,20 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 	var phone, h string
-	var attempts int
+	var attempts, maxAttempts int
 	var expires time.Time
 	var consumed bool
-	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed)
-	if err != nil || consumed || attempts >= 5 || time.Now().After(expires) {
+	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed,max_attempts,code_digits FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed, &maxAttempts, &p.CodeDigits)
+	if err != nil || consumed || attempts >= maxAttempts || time.Now().After(expires) {
 		p.Error = "کد منقضی یا مصرف شده است. کد تازه درخواست کنید."
-		a.render(w, r, "login", p)
+		a.renderAuth(w, r, "login", p)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(h), []byte(hash(p.Challenge+normalize(r.FormValue("code"))))) != 1 {
 		tx.Exec(ctx, "UPDATE otp_challenges SET attempts=attempts+1 WHERE id=$1", p.Challenge)
 		tx.Commit(ctx)
 		p.Error = "کد درست نیست. دوباره امتحان کنید."
-		a.render(w, r, "otp", p)
+		a.renderAuth(w, r, "otp", p)
 		return
 	}
 	var u User
@@ -115,7 +117,7 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if r.FormValue("terms") != "on" {
 			p.Error = "پذیرش قوانین برای ساخت حساب لازم است."
-			a.render(w, r, "otp", p)
+			a.renderAuth(w, r, "otp", p)
 			return
 		}
 		u = User{ID: token(), Phone: phone, Name: strings.TrimSpace(r.FormValue("name")), Role: "owner"}
@@ -129,6 +131,10 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tx.QueryRow(ctx, "SELECT id,role FROM users WHERE phone=$1", phone).Scan(&u.ID, &u.Role)
+	}
+	if strings.HasPrefix(p.Next, "/management") && u.Role != "admin" {
+		a.fail(w, r, "این حساب دسترسی مدیریت پلتفرم ندارد", 403)
+		return
 	}
 	newToken, newCSRF := token(), token()
 	_, err = tx.Exec(ctx, "INSERT INTO sessions(token,user_id,csrf,expires_at) VALUES($1,$2,$3,$4)", newToken, u.ID, newCSRF, time.Now().Add(7*24*time.Hour))

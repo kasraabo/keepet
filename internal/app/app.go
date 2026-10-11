@@ -256,8 +256,35 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /join", a.apply)
 	m.HandleFunc("GET /support", a.support)
 	m.HandleFunc("POST /support", a.ticket)
-	m.HandleFunc("GET /admin", a.admin)
-	m.HandleFunc("GET /admin/{section}", a.admin)
+	m.HandleFunc("GET /management", a.admin)
+	m.HandleFunc("GET /management/login", a.managementLogin)
+	m.HandleFunc("GET /management/operations", func(w http.ResponseWriter, r *http.Request) {
+		if a.auth(w, r, "admin") {
+			a.ops(w, r)
+		}
+	})
+	m.HandleFunc("POST /management/logout", a.managementLogout)
+	managedAction := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if a.auth(w, r, "admin") {
+				h(w, r)
+			}
+		}
+	}
+	m.HandleFunc("POST /management/operations/bookings/{id}", managedAction(a.opsAction))
+	m.HandleFunc("POST /management/operations/availability", managedAction(a.addAvailability))
+	m.HandleFunc("POST /management/operations/applications/{id}", managedAction(a.applicationDecision))
+	m.HandleFunc("POST /management/operations/tickets/{id}", managedAction(a.replyTicket))
+	m.HandleFunc("GET /management/{section}", a.admin)
+	m.HandleFunc("POST /management/{kind}/{id}", a.businessSave)
+	m.HandleFunc("POST /management/payout/{id}", a.businessPayout)
+	m.HandleFunc("POST /management/integrations/{id}", a.saveIntegration)
+	m.HandleFunc("GET /management/export.csv", a.businessExport)
+	m.HandleFunc("GET /management/reports.csv", a.reportExport)
+	m.HandleFunc("GET /admin", func(w http.ResponseWriter, r *http.Request) { redirect(w, r, "/management") })
+	m.HandleFunc("GET /admin/{section}", func(w http.ResponseWriter, r *http.Request) {
+		redirect(w, r, "/management/"+r.PathValue("section")+"?"+r.URL.RawQuery)
+	})
 	m.HandleFunc("POST /admin/{kind}/{id}", a.businessSave)
 	m.HandleFunc("POST /admin/payout/{id}", a.businessPayout)
 	m.HandleFunc("GET /admin/export.csv", a.businessExport)
@@ -268,7 +295,8 @@ func (a *App) Handler() http.Handler {
 }
 func (a *App) page(r *http.Request, title string) Page {
 	s := sess(r)
-	p := Page{Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
+	policy := a.otpPolicy(r.Context())
+	p := Page{OTPResend: policy.Resend, IsManagement: strings.HasPrefix(r.URL.Path, "/management"), CodeDigits: policy.Digits, CodeTTL: policy.TTL, Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
 	a.livePage(r.Context(), &p)
 	return p
 }
@@ -284,6 +312,10 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page
 		return
 	}
 	component := templ.Raw(b.String())
+	if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(name, "management-") || name == "business" {
+		ui.ManagementDocument(p.Title, component).Render(r.Context(), w)
+		return
+	}
 	if r.Header.Get("HX-Request") == "true" {
 		w.Header().Set("HX-Retarget", "body")
 		w.Header().Set("HX-Reswap", "innerHTML")
@@ -303,13 +335,22 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 func (a *App) fail(w http.ResponseWriter, r *http.Request, msg string, code int) {
 	p := a.page(r, "خطا")
 	p.Error = msg
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)
-	a.render(w, r, "error", p)
+	name := "error"
+	if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(r.FormValue("next"), "/management") {
+		name = "management-error"
+	}
+	a.render(w, r, name, p)
 }
 func (a *App) auth(w http.ResponseWriter, r *http.Request, roles ...string) bool {
 	u := sess(r).User
 	if u == nil {
-		redirect(w, r, "/login?next="+r.URL.Path)
+		login := "/login"
+		if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(r.URL.Path, "/admin") {
+			login = "/management/login"
+		}
+		redirect(w, r, login+"?next="+r.URL.Path)
 		return false
 	}
 	if len(roles) > 0 && !contains(roles, u.Role) {

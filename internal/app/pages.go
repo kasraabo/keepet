@@ -59,7 +59,7 @@ func (a *App) replyTicket(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "پاسخ ثبت نشد", 500)
 		return
 	}
-	redirect(w, r, "/ops")
+	redirect(w, r, opsHome(r))
 }
 func (a *App) publicPage(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")

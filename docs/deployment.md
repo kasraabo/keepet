@@ -38,3 +38,5 @@ DOCKER_CONFIG=/workspace/.cache/docker docker build \
 ```
 
 این تنظیم مخصوص پراکسی cloud است. bundle از secret mount فقط هنگام build استفاده می‌شود و در image یا repository ذخیره نمی‌شود. در ماشین دارای اتصال عادی، `docker build -t keepet:dev .` کافی است.
+
+تنظیمات رمزگذاری‌شدهٔ درگاه، SMS و SMTP در پنل مدیریت ذخیره می‌شوند، ولی آداپترهای ارسال و پرداخت واقعی هنوز فعال نیستند. در Docker، volume جدید `app-secrets` کلید را نگه می‌دارد؛ پشتیبان این volume مستقل از PostgreSQL لازم است. [راهنمای مدیریت و نگهداری اعتبارنامه](platform-management.md).

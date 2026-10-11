@@ -172,13 +172,13 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "تغییر وضعیت ثبت نشد", 500)
 		return
 	}
-	redirect(w, r, noticeURL("/ops", "تغییر وضعیت ثبت شد."))
+	redirect(w, r, noticeURL(opsHome(r), "تغییر وضعیت ثبت شد."))
 }
 func (a *App) addAvailability(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "ops", "admin") {
 		return
 	}
-	a.saveAvailability(w, r, r.FormValue("provider"), "/ops")
+	a.saveAvailability(w, r, r.FormValue("provider"), opsHome(r))
 }
 func (a *App) providerAvailability(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "provider") {
@@ -442,5 +442,12 @@ func (a *App) applicationDecision(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "بررسی ذخیره نشد", 500)
 		return
 	}
-	redirect(w, r, "/ops")
+	redirect(w, r, opsHome(r))
+}
+
+func opsHome(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/management/") {
+		return "/management/operations"
+	}
+	return "/ops"
 }

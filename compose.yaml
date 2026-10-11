@@ -17,9 +17,12 @@ services:
       APP_MODE: development
       DATABASE_URL: postgres://keepet:keepet_local_only@db:5432/keepet?sslmode=disable
       PORT: "8080"
+      SETTINGS_KEY_FILE: /var/lib/keepet/settings.key
+    volumes: ["app-secrets:/var/lib/keepet"]
     ports: ["127.0.0.1:8080:8080"]
     depends_on:
       db:
         condition: service_healthy
 volumes:
   db-data:
+  app-secrets:

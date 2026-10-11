@@ -8,7 +8,7 @@ RUN --mount=type=secret,id=build_ca \
 COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -o /keepet ./cmd/server
 FROM alpine:3.22
-RUN adduser -D -u 10001 keepet
+RUN adduser -D -u 10001 keepet && mkdir -p /var/lib/keepet && chown keepet:keepet /var/lib/keepet
 USER keepet
 COPY --from=build /keepet /usr/local/bin/keepet
 EXPOSE 8080
