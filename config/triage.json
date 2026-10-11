@@ -1,0 +1,7 @@
+[
+ {"id":"symptom","label":"موضوع اصلی","type":"select","required":true,"options":[{"value":"digestive","label":"گوارش / استفراغ"},{"value":"skin","label":"پوست و مو"},{"value":"behavior","label":"رفتار و بی‌حالی"},{"value":"nutrition","label":"تغذیه و مراقبت عمومی"},{"value":"other","label":"سایر موارد"}]},
+ {"id":"duration","label":"از چه زمانی؟","type":"select","required":true,"options":[{"value":"today","label":"از امروز"},{"value":"days","label":"چند روز"},{"value":"long","label":"بیش از یک هفته"}]},
+ {"id":"appetite","label":"وضعیت اشتها","type":"select","when":"digestive,behavior","options":[{"value":"normal","label":"مثل همیشه"},{"value":"less","label":"کمتر شده"},{"value":"none","label":"غذا نمی‌خورد"}]},
+ {"id":"skin_details","label":"چه تغییراتی روی پوست یا مو دیده‌اید؟","type":"textarea","when":"skin"},
+ {"id":"history","label":"شرح علائم، داروهای فعلی و سابقهٔ بیماری","type":"textarea"}
+]

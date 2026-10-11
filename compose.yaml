@@ -1,0 +1,25 @@
+services:
+  db:
+    image: postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
+    environment:
+      POSTGRES_USER: keepet
+      POSTGRES_PASSWORD: keepet_local_only
+      POSTGRES_DB: keepet
+    volumes: ["db-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keepet -d keepet"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+  app:
+    build: .
+    environment:
+      APP_MODE: development
+      DATABASE_URL: postgres://keepet:keepet_local_only@db:5432/keepet?sslmode=disable
+      PORT: "8080"
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      db:
+        condition: service_healthy
+volumes:
+  db-data:

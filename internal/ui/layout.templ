@@ -1,0 +1,24 @@
+package ui
+
+
+templ Document(title string, body templ.Component) {
+ <!DOCTYPE html>
+ <html lang="fa" dir="rtl">
+  <head>
+   <meta charset="utf-8"/>
+   <meta name="viewport" content="width=device-width, initial-scale=1"/>
+   <meta name="theme-color" content="#153e35"/>
+   <meta name="description" content="کیپت؛ مشاوره آنلاین دامپزشکی، گرومینگ و نمونه‌برداری در منزل در تهران، با هماهنگی تیم مراقبت."/>
+   <title>{ title } · کیپت</title>
+   <link rel="manifest" href="/manifest.webmanifest"/>
+   <link rel="icon" href="/static/icon.svg" type="image/svg+xml"/>
+   <link rel="stylesheet" href="/static/style.css"/>
+   <script src="/static/vendor/htmx.min.js" defer></script>
+   <script src="/static/vendor/alpine.min.js" defer></script>
+   <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+   @body
+  </body>
+ </html>
+}
