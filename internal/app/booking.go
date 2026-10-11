@@ -32,7 +32,7 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 	if !a.enabled(ctx, "service", b.Service) || (b.Service != "vet" && !a.enabled(ctx, "area", b.Area)) {
 		return nil, nil
 	}
-	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) ORDER BY a.day,a.period`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
+	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) ORDER BY a.day,a.start_time`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,13 +40,11 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 	var slots []Slot
 	for rows.Next() {
 		var s Slot
-		if err = rows.Scan(&s.ID, &s.ProviderID, &s.Day, &s.Period, &s.Capacity); err != nil {
+		if err = rows.Scan(&s.ID, &s.ProviderID, &s.Day, &s.Period, &s.StartTime, &s.EndTime, &s.Capacity); err != nil {
 			return nil, err
 		}
-		d, _ := time.ParseInLocation("2006-01-02", s.Day, a.Location)
-		h := map[string]int{"morning": 9, "noon": 12, "afternoon": 15, "night": 18}[s.Period]
-		s.Start = d.Add(time.Duration(h) * time.Hour)
-		if s.Start.Add(3 * time.Hour).After(time.Now()) {
+		a.slotTimes(&s)
+		if s.End.After(time.Now()) {
 			slots = append(slots, s)
 		}
 	}

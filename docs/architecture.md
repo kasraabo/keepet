@@ -10,7 +10,7 @@
 
 ## داده
 
-`users` نقش و شمارهٔ یکتا؛ `sessions` شناسهٔ تصادفی و CSRF؛ `otp_challenges` هش challenge+code، شمارنده و expiry؛ `providers` صلاحیت، گونه و پوشش؛ `availability` روز، بازه و ظرفیت؛ `pets` متعلق به کاربر؛ `bookings` پیش‌نویس و چرخهٔ رزرو؛ `booking_events` تایم‌لاین؛ `outbox` رویدادهای محلی؛ `applications` درخواست همکاری؛ `tickets` پشتیبانی؛ `reviews` بازخورد غیرعمومی.
+`users` نقش و شمارهٔ یکتا؛ `sessions` شناسهٔ تصادفی و CSRF؛ `otp_challenges` هش challenge+code، شمارنده و expiry؛ `providers` صلاحیت، گونه و پوشش؛ `availability` روز، نوع بازه، ساعت شروع/پایان و ظرفیت؛ `pets` متعلق به کاربر؛ `bookings` پیش‌نویس و چرخهٔ رزرو؛ `booking_events` تایم‌لاین؛ `outbox` رویدادهای محلی؛ `applications` درخواست همکاری؛ `tickets` پشتیبانی؛ `reviews` بازخورد غیرعمومی.
 
 گفتگوی ویزیت در `consultation_chats` با شناسهٔ مالک و دامپزشک همان جلسه، زمان شروع/انقضا/بسته‌شدن و مدت ثبت‌شده نگهداری می‌شود. `consultation_messages` پیام‌ها، `consultation_attachments` فایل خصوصی و بایت‌های آن، `consultation_vet_forms` علائم/تشخیص/تجویز و نظر اختیاری دربارهٔ مشتری، و `consultation_customer_forms` امتیازهای تجربهٔ مشتری را نگه می‌دارند. فایل‌ها روی دیسک عمومی یا زیر `/static` قرار نمی‌گیرند؛ بکاپ PostgreSQL آن‌ها را هم شامل می‌شود.
 
@@ -35,3 +35,6 @@ HTMX برای ارسال فرم و دریافت HTML استفاده می‌شو�
 ## مدیریت پلتفرم
 
 `/management` سند و ظاهر مستقل از سایت مشتری دارد؛ همان برنامه، دیتابیس و cookie identity با role guard admin. گزارش‌ها مرز روز تهران و تعاریف صریح KPI دارند. platform_integrations دادهٔ عمومی و ciphertext را جدا نگه می‌دارد؛ کلید خارج PostgreSQL است. policy OTP به صدور کد وصل شده و قواعد هر challenge ثابت می‌مانند. [مدیریت پلتفرم](platform-management.md).
+
+
+تخصیص جدید شناسهٔ availability و ساعت دقیق را می‌گیرد و روز/متخصص را از دیتابیس استخراج می‌کند. ساعت پایان غیرشامل است؛ ظرفیت همان رزرو پرداخت‌شده هنگام تخصیص از رزروهای دیگر جدا محاسبه می‌شود. مهاجرت زمان‌های سفارشی، شناسهٔ بازه‌های موجود را حفظ می‌کند و محاسبهٔ ظرفیت داشبورد از ساعت پایان واقعی هر بازه استفاده می‌کند. [جزئیات](availability.md).

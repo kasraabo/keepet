@@ -50,10 +50,27 @@ type Booking struct {
 type Slot struct {
 	Used int
 
-	ID, ProviderID, Day, Period string
-	Capacity                    int
-	Start                       time.Time
+	ID, ProviderID, Day, Period      string
+	ProviderName, StartTime, EndTime string
+	Capacity                         int
+	Start                            time.Time
+	End                              time.Time
 }
+
+func (s Slot) Label() string {
+	if s.Period == "custom" {
+		return "دلخواه · " + digits(s.StartTime) + " تا " + digits(s.EndTime)
+	}
+	return period(s.Period)
+}
+func (s Slot) Remaining() int {
+	n := s.Capacity - s.Used
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 type Area struct{ ID, Name, Path string }
 
 var Areas = []Area{{"saadat", "سعادت‌آباد", "20,15 100,15 105,65 50,85 20,60"}, {"shahrak", "شهرک غرب", "20,65 50,90 110,75 120,135 40,140 15,110"}, {"vanak", "ونک", "110,45 180,45 200,95 130,110 110,75"}, {"yousef", "یوسف‌آباد", "130,115 200,100 205,165 145,170 120,140"}, {"niavaran", "نیاوران", "185,15 275,15 285,70 205,85 180,40"}}
@@ -76,9 +93,10 @@ type Application struct {
 }
 type Ticket struct{ ID, Subject, Body, Reply, Status string }
 type Page struct {
-	Chat      *ChatView
-	Chats     []ChatSummary
-	OTPResend int
+	AssignmentSlots map[string][]Slot
+	Chat            *ChatView
+	Chats           []ChatSummary
+	OTPResend       int
 
 	IsManagement bool
 

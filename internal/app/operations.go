@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 )
 
 func (a *App) ops(w http.ResponseWriter, r *http.Request) {
@@ -20,6 +19,16 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.Providers, _ = a.providers(r.Context(), "")
+	p.AssignmentSlots = make(map[string][]Slot)
+	for _, b := range p.Bookings {
+		if b.Status == "paid" || b.Status == "confirmed" {
+			p.AssignmentSlots[b.ID], err = a.assignmentSlots(r.Context(), b)
+			if err != nil {
+				a.fail(w, r, "بازه‌های قابل تخصیص بارگذاری نشدند", 500)
+				return
+			}
+		}
+	}
 	rows, err := a.DB.Query(r.Context(), "SELECT id,user_id,service,name,license,bio,area,price,status,reason FROM applications ORDER BY created_at DESC")
 	if err == nil {
 		for rows.Next() {
@@ -76,48 +85,16 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "ابتدا درخواست را تأیید کنید", 409)
 			return
 		}
-		selected := r.FormValue("provider")
-		if b.Service == "vet" && selected != b.ProviderID {
-			a.fail(w, r, "تعویض دامپزشک نیازمند پذیرش مشتری است", 409)
+		if !validMeeting(r.FormValue("meeting_url")) {
+			a.fail(w, r, "لینک ارتباط باید HTTPS معتبر باشد", 400)
 			return
 		}
-		var active, verified bool
-		var svc string
-		var species, areas []string
-		err = tx.QueryRow(ctx, "SELECT active,verified,service,species,areas FROM providers WHERE id=$1", selected).Scan(&active, &verified, &svc, &species, &areas)
-		if err != nil || !active || !verified || svc != b.Service || !contains(species, b.Species) || (svc != "vet" && !contains(areas, b.Area)) {
-			a.fail(w, r, "ارائه‌دهنده برای این درخواست صلاحیت یا پوشش ندارد", 400)
+		slot, exact, msg, code := a.assignedWindow(ctx, tx, b, r)
+		if code != 0 {
+			a.fail(w, r, msg, code)
 			return
 		}
-		exact, e := time.ParseInLocation("2006-01-02T15:04", r.FormValue("exact_time"), a.Location)
-		meeting := r.FormValue("meeting_url")
-		if e != nil || !exact.After(time.Now()) || !validMeeting(meeting) {
-			a.fail(w, r, "زمان آینده و لینک معتبر HTTPS وارد کنید", 400)
-			return
-		}
-		periodKey := ""
-		h := exact.Hour()
-		switch {
-		case h >= 9 && h < 12:
-			periodKey = "morning"
-		case h >= 12 && h < 15:
-			periodKey = "noon"
-		case h >= 15 && h < 18:
-			periodKey = "afternoon"
-		case h >= 18 && h < 21:
-			periodKey = "night"
-		}
-		var slot string
-		var cap, used int
-		err = tx.QueryRow(ctx, "SELECT id,capacity FROM availability WHERE provider_id=$1 AND day=$2 AND period=$3 FOR UPDATE", selected, exact.Format("2006-01-02"), periodKey).Scan(&slot, &cap)
-		if err == nil {
-			err = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id!=$2 AND payment_status='paid' AND status NOT IN ('cancelled','cancel_requested')", slot, b.ID).Scan(&used)
-		}
-		if err != nil || used >= cap {
-			a.fail(w, r, "برای این زمان ظرفیت ثبت نشده است", 409)
-			return
-		}
-		_, err = tx.Exec(ctx, "UPDATE bookings SET provider_id=$2,availability_id=$3,exact_time=$4,meeting_url=$5,status='assigned' WHERE id=$1", b.ID, selected, slot, exact, meeting)
+		_, err = tx.Exec(ctx, "UPDATE bookings SET provider_id=$2,availability_id=$3,exact_time=$4,meeting_url=$5,status='assigned' WHERE id=$1", b.ID, slot.ProviderID, slot.ID, exact, r.FormValue("meeting_url"))
 		detail = "زمان دقیق با مشتری و ارائه‌دهنده هماهنگ شد."
 	case "replace":
 		if b.Service != "vet" || !contains([]string{"paid", "confirmed", "assigned", "accepted"}, b.Status) {
@@ -202,58 +179,6 @@ func (a *App) providerAvailability(w http.ResponseWriter, r *http.Request) {
 	}
 	a.saveAvailability(w, r, id, "/provider")
 }
-func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next string) {
-	day, err := time.ParseInLocation("2006-01-02", r.FormValue("day"), a.Location)
-	cap, e := strconv.Atoi(normalize(r.FormValue("capacity")))
-	prd := r.FormValue("period")
-	today, _ := time.ParseInLocation("2006-01-02", time.Now().In(a.Location).Format("2006-01-02"), a.Location)
-	if err != nil || e != nil || cap < 0 || cap > 20 || !contains([]string{"morning", "noon", "afternoon", "night"}, prd) || day.Before(today) || day.After(today.AddDate(0, 0, 90)) {
-		a.fail(w, r, "تاریخ امروز تا ۹۰ روز آینده، بازه و ظرفیت صفر تا ۲۰ وارد کنید", 400)
-		return
-	}
-	hour := map[string]int{"morning": 9, "noon": 12, "afternoon": 15, "night": 18}[prd]
-	if !day.Add(time.Duration(hour+3) * time.Hour).After(time.Now()) {
-		a.fail(w, r, "این بازه تمام شده است", 400)
-		return
-	}
-	ctx := r.Context()
-	tx, err := a.DB.Begin(ctx)
-	if err != nil {
-		a.fail(w, r, "ثبت بازه انجام نشد", 500)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var valid bool
-	err = tx.QueryRow(ctx, "SELECT active AND verified FROM providers WHERE id=$1 FOR SHARE", id).Scan(&valid)
-	if err != nil || !valid {
-		a.fail(w, r, "متخصص فعال و تأییدشده انتخاب کنید", 400)
-		return
-	}
-	_, err = tx.Exec(ctx, "INSERT INTO availability(id,provider_id,day,period,capacity) VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider_id,day,period) DO NOTHING", token(), id, day.Format("2006-01-02"), prd, cap)
-	var slot string
-	if err == nil {
-		err = tx.QueryRow(ctx, "SELECT id FROM availability WHERE provider_id=$1 AND day=$2 AND period=$3 FOR UPDATE", id, day.Format("2006-01-02"), prd).Scan(&slot)
-	}
-	var used int
-	if err == nil {
-		err = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND payment_status='paid' AND status NOT IN ('cancelled','cancel_requested')", slot).Scan(&used)
-	}
-	if err == nil && cap < used {
-		a.fail(w, r, "ظرفیت نمی‌تواند کمتر از رزروهای ثبت‌شده باشد؛ برای تغییر رزرو با عملیات هماهنگ کنید", 409)
-		return
-	}
-	if err == nil {
-		_, err = tx.Exec(ctx, "UPDATE availability SET capacity=$2 WHERE id=$1", slot, cap)
-	}
-	if err == nil {
-		err = tx.Commit(ctx)
-	}
-	if err != nil {
-		a.fail(w, r, "ثبت بازه انجام نشد", 500)
-		return
-	}
-	redirect(w, r, noticeURL(next, "بازهٔ در دسترس ذخیره شد؛ تأیید و هماهنگی رزرو همچنان با عملیات است."))
-}
 func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "provider", "owner") {
 		return
@@ -263,17 +188,18 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	err := a.DB.QueryRow(r.Context(), "SELECT id FROM providers WHERE user_id=$1 AND active", p.User.ID).Scan(&providerID)
 	if err == nil {
 		p.Next = providerID
-		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,CASE a.period WHEN 'morning' THEN 1 WHEN 'noon' THEN 2 WHEN 'afternoon' THEN 3 ELSE 4 END LIMIT 360`, providerID)
+		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
 		if slotErr != nil {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return
 		}
 		for slotRows.Next() {
 			var slot Slot
-			slotErr = slotRows.Scan(&slot.ID, &slot.Day, &slot.Period, &slot.Capacity, &slot.Used)
+			slotErr = slotRows.Scan(&slot.ID, &slot.Day, &slot.Period, &slot.StartTime, &slot.EndTime, &slot.Capacity, &slot.Used)
 			if slotErr != nil {
 				break
 			}
+			a.slotTimes(&slot)
 			p.Slots = append(p.Slots, slot)
 		}
 		if slotErr == nil {
