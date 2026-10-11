@@ -277,22 +277,75 @@ func TestIntegration(t *testing.T) {
 			}
 		})
 	}
+	admin := newBrowser(t, s)
+	admin.login("09120000005")
 	for _, svc := range []string{"vet", "grooming", "sampling"} {
 		t.Run("fulfillment "+svc, func(t *testing.T) {
 			id := ids[svc]
+			pb := map[string]*browser{"vet": vet, "grooming": groomer, "sampling": sampler}[svc]
+			jobAction := `action="/provider/bookings/` + id + `"`
+			html, code := pb.get("/provider")
+			if code != 200 || strings.Contains(html, jobAction) {
+				t.Fatalf("paid booking became an actionable provider job: %d", code)
+			}
 			var day, prd, prov string
 			a.DB.QueryRow(ctx, "SELECT day::text,period,provider_id FROM availability WHERE id=$1", slots[svc]).Scan(&day, &prd, &prov)
 			h := map[string]int{"morning": 10, "afternoon": 16, "night": 19}[prd]
 			exact := fmt.Sprintf("%sT%02d:30", day, h)
-			_, code := ops.post("/ops/bookings/"+id, url.Values{"action": {"confirm"}})
-			if code != 200 {
-				t.Fatalf("confirm %d", code)
+			managementAction := "/management/operations/bookings/" + id
+			html, code = admin.post(managementAction, url.Values{"action": {"confirm"}})
+			notice := regexp.MustCompile(`<div class="alert alert-success" role="status">([^<]+)</div>`).FindStringSubmatch(html)
+			if code != 200 || len(notice) != 2 || !strings.Contains(notice[1], "تخصیص") || !strings.Contains(html, "management-body") {
+				t.Fatalf("confirmation did not explain the remaining management assignment: %d: %s", code, html)
 			}
-			html, code := ops.post("/ops/bookings/"+id, url.Values{"action": {"assign"}, "provider": {prov}, "exact_time": {exact}, "meeting_url": {"https://meet.example.org/test"}})
+			var state string
+			if err := a.DB.QueryRow(ctx, "SELECT status FROM bookings WHERE id=$1", id).Scan(&state); err != nil || state != "confirmed" {
+				t.Fatalf("confirmation bypassed curated assignment: status %q error %v", state, err)
+			}
+			assignAt := strings.Index(html, `action="`+managementAction+`"`)
+			if assignAt < 0 {
+				t.Fatal("confirmed booking has no assignment form")
+			}
+			detailsAt := strings.LastIndex(html[:assignAt], "<details")
+			if detailsAt < 0 {
+				t.Fatal("confirmed assignment controls are missing")
+			}
+			endTag := strings.Index(html[detailsAt:], ">")
+			if endTag < 0 || !strings.Contains(html[detailsAt:detailsAt+endTag], " open") {
+				t.Fatal("confirmed booking assignment controls are collapsed")
+			}
+			html, code = pb.get("/provider")
+			if code != 200 || strings.Contains(html, jobAction) {
+				t.Fatalf("confirmation alone exposed an actionable provider job: %d", code)
+			}
+			html, code = admin.post(managementAction, url.Values{"action": {"assign"}, "provider": {prov}, "exact_time": {exact}, "meeting_url": {"https://meet.example.org/test"}})
 			if code != 200 {
 				t.Fatalf("assign %d: %s", code, html)
 			}
-			pb := map[string]*browser{"vet": vet, "grooming": groomer, "sampling": sampler}[svc]
+			html, code = pb.get("/provider")
+			jobAt := strings.Index(html, jobAction)
+			if code != 200 || jobAt < 0 {
+				t.Fatalf("assigned booking not visible to its provider: %d", code)
+			}
+			formEnd := strings.Index(html[jobAt:], "</form>")
+			if formEnd < 0 || !strings.Contains(html[jobAt:jobAt+formEnd], `value="accept"`) {
+				t.Fatal("assigned provider job has no acceptance action")
+			}
+			jobsAt, availabilityAt := strings.Index(html, `id="provider-jobs"`), strings.Index(html, `id="provider-availability"`)
+			if jobsAt < 0 || availabilityAt < 0 || jobsAt >= availabilityAt {
+				t.Fatal("provider jobs are hidden below the availability section")
+			}
+			if svc == "vet" {
+				alternateVet := newBrowser(t, s)
+				alternateVet.login("09120000006")
+				body, status := alternateVet.get("/provider")
+				if status != 200 || strings.Contains(body, jobAction) {
+					t.Fatalf("another veterinarian can see the assigned job: %d", status)
+				}
+				if _, status = alternateVet.post("/provider/bookings/"+id, url.Values{"action": {"accept"}}); status != 404 {
+					t.Fatalf("another veterinarian accepted the assigned job: %d", status)
+				}
+			}
 			_, code = other.post("/provider/bookings/"+id, url.Values{"action": {"accept"}})
 			if code != 403 {
 				t.Fatal("unauthorized provider mutation")

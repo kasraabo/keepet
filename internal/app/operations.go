@@ -177,7 +177,13 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "تغییر وضعیت ثبت نشد", 500)
 		return
 	}
-	redirect(w, r, noticeURL(opsHome(r), "تغییر وضعیت ثبت شد."))
+	notice := "تغییر وضعیت ثبت شد."
+	if action == "confirm" {
+		notice = "بررسی سفارش تأیید شد. برای نمایش در کارهای متخصص، بخش «تخصیص و ثبت زمان دقیق» همین سفارش را تکمیل کنید."
+	} else if action == "assign" {
+		notice = "سفارش به متخصص تخصیص داده شد و در پنل «کارهای من» او قابل پذیرش است."
+	}
+	redirect(w, r, noticeURL(opsHome(r), notice))
 }
 func (a *App) addAvailability(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "ops", "admin") {
@@ -278,7 +284,11 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return
 		}
-		p.Bookings, _ = a.bookings(r.Context(), "provider_id=$1 AND status IN ('assigned','accepted','in_progress','collected','delivered','completed','result_ready')", providerID)
+		p.Bookings, err = a.bookings(r.Context(), "provider_id=$1 AND status IN ('assigned','accepted','in_progress','collected','delivered','completed','result_ready')", providerID)
+		if err != nil {
+			a.fail(w, r, "سفارش‌ها بارگذاری نشدند؛ صفحه را تازه کنید", 500)
+			return
+		}
 	}
 	rows, err := a.DB.Query(r.Context(), "SELECT id,user_id,service,name,license,bio,area,price,status,reason FROM applications WHERE user_id=$1 ORDER BY created_at DESC", p.User.ID)
 	if err == nil {
