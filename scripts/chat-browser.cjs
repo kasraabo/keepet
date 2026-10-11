@@ -1,0 +1,81 @@
+// Run against a disposable *_smoke database only; this creates a paid test visit.
+const {chromium} = require('playwright');
+const {execFileSync} = require('node:child_process');
+const fs = require('node:fs');
+const {randomUUID} = require('node:crypto');
+const base = process.env.BASE_URL || 'http://127.0.0.1:8085';
+const db = process.env.CHAT_TEST_DATABASE;
+if (!db || !/^keepet_[a-z_]+_smoke$/.test(db)) throw Error('Set CHAT_TEST_DATABASE to a disposable keepet_*_smoke database');
+const sql = query => execFileSync('docker', ['exec', 'keepet-db', 'psql', '-U', 'keepet', '-d', db, '-At', '-v', 'ON_ERROR_STOP=1', '-c', query], {encoding:'utf8'}).trim();
+const assert = (test, message) => { if (!test) throw Error(message); };
+
+(async () => {
+  const browser = await chromium.launch({executablePath:'/usr/bin/chromium', headless:true, args:['--no-sandbox','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']});
+  const errors=[];
+  async function actor(phone, manager=false) {
+    const context=await browser.newContext({viewport:{width:390,height:844},permissions:['microphone']});
+    const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(base+(manager?'/management/login':'/login'));
+    await page.locator('[name=phone]').fill(phone);await page.locator('form[action="/auth/request"] button').click();
+    await page.locator('[name=code]').fill((await page.locator('[data-dev-code]').innerText()).trim());
+    if(await page.locator('[name=terms]').count()) await page.locator('[name=terms]').check();
+    await page.locator('form[action="/auth/verify"] button').click();
+    await page.waitForURL(manager?'**/management':phone==='09120000002'?'**/provider':'**/dashboard');
+    return {context,page};
+  }
+  const phone='0917'+String(Math.floor(Math.random()*1e7)).padStart(7,'0');
+  const owner=await actor(phone),vet=await actor('09120000002'),admin=await actor('09120000005',true);
+  const bid=randomUUID();
+  sql(`INSERT INTO bookings(id,session_token,owner_id,service,pet_name,age,weight,provider_id,status,payment_status,payment_key,amount,paid_at,exact_time,consent) SELECT '${bid}',s.token,u.id,'vet','موچی','۲ سال','۴ کیلوگرم','vet-nazanin','accepted','paid','${randomUUID()}',350000,now(),now(),true FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.phone='${phone}' LIMIT 1`);
+  await vet.page.goto(base+'/provider');
+  const job=vet.page.locator(`form[action="/provider/bookings/${bid}"]`);
+  await job.locator('button[value=start]').click();await vet.page.waitForURL(/\/chats\/[a-f0-9]+$/);
+  const cid=vet.page.url().split('/').pop(),room='/chats/'+cid;
+  await owner.page.goto(base+'/bookings/'+bid);await owner.page.locator(`.chat-entry a.btn`).click();
+  await owner.page.waitForURL('**'+room);
+  assert(/^(۲۹|۳۰):/.test(await owner.page.locator('[data-chat-timer]').innerText()),'default 30 minute countdown');
+  await admin.page.goto(base+'/management/chats/'+cid);
+  assert(await admin.page.locator('.header,.footer').count()===0,'management independent layout');
+  assert(await admin.page.locator('[data-chat-composer]').count()===0,'staff read only');
+  await admin.page.locator('[name=duration_minutes]').fill('60');await admin.page.locator('.chat-admin-duration button').click();
+  assert(sql(`SELECT duration_minutes FROM consultation_chats WHERE id='${cid}'`)==='60','per visit duration saved');
+  await admin.page.locator('[name=duration_minutes]').fill('30');await admin.page.locator('.chat-admin-duration button').click();
+  await owner.page.locator('[data-chat-text]').fill('سلام دکتر، موچی امروز بی‌اشتهایی دارد. <script>window.chatInjected=true</script>');
+  await owner.page.locator('[data-chat-send]').click();await vet.page.locator('.chat-message-body').filter({hasText:'بی‌اشتهایی'}).waitFor();
+  assert(!await vet.page.evaluate(()=>window.chatInjected),'message XSS escaped');
+  await vet.page.locator('[data-chat-text]').fill('سلام، تصویر واضحی از موچی بفرستید و علائم را توضیح دهید.');
+  await vet.page.locator('[data-chat-send]').click();await owner.page.locator('.chat-message-body').filter({hasText:'تصویر واضحی'}).waitFor();
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=','base64');
+  await owner.page.locator('[data-chat-file]').setInputFiles({name:'mochi.png',mimeType:'image/png',buffer:png});
+  await owner.page.locator('[data-chat-send]').click();await vet.page.locator('.chat-message-image').waitFor();
+  await vet.page.waitForFunction(()=>document.querySelector('.chat-message-image').naturalWidth>0);
+  await owner.page.locator('[data-chat-record]').click();await owner.page.locator('[data-chat-recording]').waitFor({state:'visible'});
+  await owner.page.waitForTimeout(1500);await owner.page.locator('[data-chat-record-stop]').click();
+  await owner.page.locator('[data-chat-file-preview] audio').waitFor();
+  await owner.page.locator('[data-chat-send]').click();await vet.page.locator('.chat-message-audio').waitFor();
+  await vet.page.waitForFunction(()=>document.querySelector('.chat-message-audio').readyState>=1);
+  const audioURL=await vet.page.locator('.chat-message-audio').getAttribute('src');
+  assert(sql(`SELECT count(*) FROM consultation_messages WHERE chat_id='${cid}' AND kind='audio'`)==='1','real microphone recording saved');
+  const stranger=await browser.newContext();const privateRead=await stranger.request.get(base+audioURL);assert(privateRead.status()===401,'private media requires login');await stranger.close();
+  assert(!await owner.page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),'chat mobile overflow');
+  await owner.page.screenshot({path:'/tmp/keepet-chat-mobile.png',fullPage:true});
+  await vet.page.setViewportSize({width:1440,height:1000});await vet.page.screenshot({path:'/tmp/keepet-chat-desktop.png',fullPage:true});
+  // Leaving prompts only this participant and preserves the other participant's room.
+  await owner.page.locator('[data-chat-leave]').click();await owner.page.waitForURL('**/questionnaire');
+  assert(sql(`SELECT closed_at IS NULL FROM consultation_chats WHERE id='${cid}'`)==='t','leave does not end visit');
+  await owner.page.screenshot({path:'/tmp/keepet-chat-customer-survey.png',fullPage:true});
+  await owner.page.locator('[name=rating][value="5"]').check();await owner.page.locator('[name=communication][value="4"]').check();await owner.page.locator('[name=clarity][value="5"]').check();
+  await owner.page.locator('[name=body]').fill('ممنون از راهنمایی روشن شما');await owner.page.locator('.chat-questionnaire-form button[type=submit]').click();await owner.page.waitForURL(/\/chats\/[^/]+\?notice=/);
+  await vet.page.locator('[data-chat-end] button').click();await vet.page.waitForURL('**/questionnaire');
+  assert(sql(`SELECT status FROM bookings WHERE id='${bid}'`)==='in_progress','clinical form needed for completion');
+  await vet.page.locator('[name=symptoms]').fill('بی‌اشتهایی و بی‌حالی از امروز');await vet.page.locator('[name=diagnosis]').fill('تشخیص احتمالی؛ برای تشخیص قطعی معاینه لازم است');await vet.page.locator('[name=prescription]').fill('مراجعه حضوری در صورت تداوم علائم؛ آب تازه در دسترس باشد.');await vet.page.locator('[name=customer_feedback]').fill('یادداشت خصوصی دربارهٔ مشتری');
+  await vet.page.screenshot({path:'/tmp/keepet-chat-vet-form.png',fullPage:true});
+  await vet.page.locator('.chat-questionnaire-form button[type=submit]').click();await vet.page.waitForURL(/\/chats\/[^/]+\?notice=/);
+  assert(sql(`SELECT status FROM bookings WHERE id='${bid}'`)==='completed','clinical form completes visit');
+  await owner.page.reload();assert(await owner.page.locator('[data-chat-send]').isDisabled(),'archive read only');assert(!(await owner.page.content()).includes('یادداشت خصوصی دربارهٔ مشتری'),'vet optional feedback private');
+  await admin.page.reload();assert((await admin.page.content()).includes('یادداشت خصوصی دربارهٔ مشتری'),'management sees private clinical opinion');
+  for(const actor of [owner,vet,admin]){await actor.page.goto(base+(actor===admin?'/management/chats':'/chats'));assert(await actor.page.locator(`.chat-entry a[href$="${cid}"]`).count()>0,'archive in each record');}
+  await owner.context.storageState({path:'/tmp/keepet-chat-smoke-state.json'});fs.writeFileSync('/tmp/keepet-chat-smoke-media.json',JSON.stringify({audioURL,cid,bid}));
+  assert(errors.length===0,'browser JS errors: '+errors.join('; '));await browser.close();
+  console.log('Chat browser passed: two real accounts, polling, escaped text, PNG, recorded WebM playback, private media, leave/end, questionnaires, 30min config, management and archives.');
+})().catch(e=>{console.error(e);process.exit(1)});

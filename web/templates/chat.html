@@ -1,0 +1,123 @@
+{{define "chat-assets"}}<link rel="stylesheet" href="/static/chat.css"><script src="/static/chat.js" defer></script>{{end}}
+
+{{define "chat-state"}}{{if eq . "active"}}گفت‌وگوی در حال انجام{{else if eq . "scheduled"}}در انتظار شروع دامپزشک{{else}}گفت‌وگوی بایگانی‌شده{{end}}{{end}}
+
+{{define "chat"}}
+{{template "chat-assets" .}}
+{{if .IsManagement}}{{template "management-top" .}}{{else}}{{template "header" .}}{{end}}
+{{$c := .Chat}}
+<main class="chat-page" data-chat-root data-chat-id="{{$c.ID}}" data-chat-role="{{$c.Role}}" data-chat-state="{{$c.State}}" data-chat-expires="{{iso $c.ExpiresAt}}" data-chat-participant="{{$c.IsParticipant}}" data-chat-questionnaire-done="{{$c.QuestionnaireDone}}">
+  <div class="chat-breadcrumb"><a href="{{$c.BackURL}}">← بازگشت به پرونده</a><span>ویزیت آنلاین · کد {{short $c.BookingID}}</span></div>
+  {{template "notice" .}}
+  <div class="chat-layout">
+    <aside class="chat-sidebar">
+      <div class="chat-care-mark"><svg class="icon"><use href="#i-stethoscope"/></svg></div>
+      <div class="eyebrow">اتاق مراقبت کیپت</div>
+      <h1>گفت‌وگو دربارهٔ {{$c.PetName}}</h1>
+      <p class="chat-side-intro">همراهی دامپزشک، همین‌جا در کیپت</p>
+      <dl class="chat-participants"><div><dt>دامپزشک</dt><dd>{{$c.VetName}}</dd></div><div><dt>صاحب حیوان</dt><dd>{{$c.OwnerName}}</dd></div></dl>
+      <div class="chat-session-card">
+        <span class="chat-status chat-status-{{$c.State}}" data-chat-state-label>{{template "chat-state" $c.State}}</span>
+        <strong class="chat-timer" data-chat-timer>{{if eq $c.State "scheduled"}}{{digits (printf "%d" $c.DurationMinutes)}} دقیقه{{else if eq $c.State "archived"}}در پرونده محفوظ است{{else}}در حال محاسبه…{{end}}</strong>
+        <span class="chat-timer-caption" data-chat-timer-caption>{{if eq $c.State "scheduled"}}زمان گفت‌وگو از شروع دامپزشک محاسبه می‌شود.{{else if eq $c.State "active"}}زمان باقی‌ماندهٔ ارسال پیام{{else}}ارسال پیام تازه بسته شده است.{{end}}</span>
+        {{if $c.StartedAt}}<small>شروع: <time data-datetime="{{iso $c.StartedAt}}">{{iso $c.StartedAt}}</time></small>{{end}}
+        {{if $c.ExpiresAt}}<small>پایان مهلت: <time data-datetime="{{iso $c.ExpiresAt}}">{{iso $c.ExpiresAt}}</time></small>{{end}}
+        {{if $c.ArchivedAt}}<small>بایگانی: <time data-datetime="{{iso $c.ArchivedAt}}">{{iso $c.ArchivedAt}}</time></small>{{end}}
+      </div>
+      {{if and .IsManagement (eq $c.State "active")}}{{template "chat-admin-duration" .}}{{end}}
+      <div class="chat-side-actions">
+        {{if $c.IsParticipant}}<a class="btn btn-outline" href="/chats/{{$c.ID}}/questionnaire" data-chat-leave>{{if and $c.QuestionnaireDone (eq $c.Role "vet") (eq $c.State "active")}}ویرایش گزارش ویزیت{{else if $c.QuestionnaireDone}}مشاهدهٔ پرسشنامهٔ من{{else if eq $c.State "archived"}}تکمیل پرسشنامهٔ پایانی{{else}}خروج از گفت‌وگو و ثبت پرسشنامه{{end}}</a>{{end}}
+        {{if $c.CanEnd}}<form method="post" action="/chats/{{$c.ID}}/end" data-chat-end>{{template "csrf" .}}<button class="chat-end-btn" type="submit">پایان و بایگانی گفت‌وگو</button></form>{{end}}
+      </div>
+      <div class="chat-safety"><svg class="icon"><use href="#i-shield"/></svg><p>این مشاوره جایگزین معاینهٔ حضوری نیست. در وضعیت اورژانسی به کلینیک مراجعه کنید. نسخه فقط سند درمان است؛ کیپت دارو نمی‌فروشد.</p></div>
+    </aside>
+    <section class="chat-conversation" aria-label="پیام‌های ویزیت">
+      <header class="chat-conversation-head"><div><h2>گفت‌وگوی شما</h2><span class="chat-privacy">خصوصی · متن، تصویر و پیام صوتی</span></div><span class="chat-connection" data-chat-connection role="status">{{if eq $c.State "archived"}}بایگانی{{else}}متصل{{end}}</span></header>
+      {{if eq $c.State "scheduled"}}<div class="chat-room-notice" data-chat-room-notice>دامپزشک هنوز گفت‌وگو را شروع نکرده است. بعد از شروع ویزیت، ارسال پیام فعال می‌شود.</div>{{else if eq $c.State "archived"}}<div class="chat-room-notice" data-chat-room-notice>این گفت‌وگو در پروندهٔ شما بایگانی شده است؛ پیام‌ها و پیوست‌ها قابل مشاهده‌اند.</div>{{else}}<div class="chat-room-notice" data-chat-room-notice hidden></div>{{end}}
+      <div class="chat-messages" data-chat-messages role="log" aria-label="تاریخچهٔ گفت‌وگو" aria-live="off" aria-relevant="additions">
+        {{range $c.Messages}}{{template "chat-message" .}}{{else}}<div class="chat-empty" data-chat-empty><div class="chat-empty-icon"><svg class="icon"><use href="#i-chat"/></svg></div><h3>اولین پیام را بنویسید</h3><p>علائم، سؤال‌ها و تصویرهای مرتبط با {{$c.PetName}} را اینجا به اشتراک بگذارید.</p></div>{{end}}
+      </div>
+      <div class="chat-new-message-wrap"><button type="button" class="chat-new-message" data-chat-scroll hidden>پیام جدید ↓</button></div>
+      <div class="chat-client-error" data-chat-error role="alert" hidden></div>
+      {{if $c.IsParticipant}}
+      <form class="chat-composer" action="/chats/{{$c.ID}}/messages" method="post" enctype="multipart/form-data" data-chat-composer>
+        {{template "csrf" .}}
+        <label class="chat-text-label" for="chat-text">پیام شما</label>
+        <textarea id="chat-text" name="text" rows="2" maxlength="4000" placeholder="پیامتان را بنویسید…" data-chat-text {{if not $c.CanSend}}disabled{{end}}></textarea>
+        <div class="chat-file-preview" data-chat-file-preview hidden></div>
+        <div class="chat-recording" data-chat-recording hidden><span class="chat-record-dot"></span><span>در حال ضبط <time data-chat-record-time>۰۰:۰۰</time></span><button class="chat-tool-btn" type="button" data-chat-record-stop>پایان ضبط</button><button class="chat-tool-btn chat-discard-btn" type="button" data-chat-record-discard>حذف</button></div>
+        <div class="chat-composer-bottom">
+          <div class="chat-composer-tools"><label class="chat-tool-btn chat-file-button" title="افزودن تصویر یا فایل صوتی"><svg class="chat-tool-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="m8 12 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l9-9"/></svg><span>پیوست</span><input type="file" name="file" accept="image/jpeg,image/png,image/webp,audio/webm,audio/ogg,audio/mp4,audio/mpeg,audio/wav,audio/x-wav,.webm,.ogg,.m4a,.mp3,.wav" data-chat-file {{if not $c.CanSend}}disabled{{end}}></label><button class="chat-tool-btn" type="button" title="ضبط پیام صوتی" data-chat-record {{if not $c.CanSend}}disabled{{end}}><svg class="chat-tool-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></svg><span>ضبط صدا</span></button></div>
+          <button class="btn chat-send" type="submit" data-chat-send {{if not $c.CanSend}}disabled{{end}}>ارسال <svg class="icon small"><use href="#i-arrow"/></svg></button>
+        </div>
+        <p class="chat-upload-hint">تصویر تا ۸ مگابایت · فایل صوتی تا ۱۲ مگابایت · ضبط تا ۵ دقیقه</p>
+      </form>
+      {{else}}<div class="chat-readonly">دسترسی مدیریت به این گفت‌وگو برای مشاهده و پیگیری پرونده است.</div>{{end}}
+    </section>
+  </div>
+  {{if or $c.VetForm $c.CustomerForm}}<section class="chat-results"><h2>جمع‌بندی ویزیت</h2>{{template "chat-form-results" .}}</section>{{end}}
+</main>
+{{end}}
+
+{{define "chat-admin-duration"}}
+{{if and .IsManagement (eq .Chat.State "active")}}
+<form class="chat-admin-duration" action="/management/chats/{{.Chat.ID}}/duration" method="post">{{template "csrf" .}}<input type="hidden" name="expected_expires" value="{{iso .Chat.ExpiresAt}}"><label for="chat-duration">مدت کل گفت‌وگو از شروع ویزیت <small>دقیقه</small></label><div><input type="number" id="chat-duration" name="duration_minutes" min="5" max="240" value="{{.Chat.DurationMinutes}}" required><button class="chat-tool-btn" type="submit">ذخیره</button></div><p>تغییر این مقدار فقط روی همین ویزیت اثر دارد؛ مدت از زمان شروع محاسبه می‌شود.</p></form>
+{{end}}
+{{end}}
+
+{{define "chat-message"}}
+<article class="chat-message {{if .Own}}chat-message-own{{end}}" data-message-id="{{.ID}}"><div class="chat-message-meta"><strong>{{.SenderName}}</strong><span>{{if eq .Role "vet"}}دامپزشک{{else if eq .Role "owner"}}صاحب حیوان{{else}}مدیریت{{end}}</span></div>{{if .Body}}<p class="chat-message-body" dir="auto">{{.Body}}</p>{{end}}{{if .AttachmentID}}{{if eq .Kind "image"}}<a class="chat-image-link" href="/chat-media/{{.AttachmentID}}" target="_blank" rel="noopener"><img class="chat-message-image" src="/chat-media/{{.AttachmentID}}" alt="تصویر ارسالی {{.SenderName}}" loading="lazy"></a>{{else}}<audio class="chat-message-audio" controls preload="metadata" src="/chat-media/{{.AttachmentID}}">مرورگر شما پخش فایل صوتی را پشتیبانی نمی‌کند.</audio>{{end}}<a class="chat-attachment-name" href="/chat-media/{{.AttachmentID}}" target="_blank" rel="noopener">{{if .Filename}}{{.Filename}}{{else}}مشاهدهٔ پیوست{{end}}</a>{{end}}<time class="chat-message-time" data-datetime="{{stamp .At}}">{{stamp .At}}</time></article>
+{{end}}
+
+{{define "chat-form-results"}}
+{{$c := .Chat}}
+<div class="chat-results-grid">
+{{if $c.VetForm}}<article class="panel chat-clinical-result"><div class="eyebrow">گزارش دامپزشک</div><h3>جمع‌بندی درمانی {{$c.PetName}}</h3><dl><dt>علائم کلی</dt><dd>{{$c.VetForm.Symptoms}}</dd><dt>تشخیص</dt><dd>{{$c.VetForm.Diagnosis}}</dd><dt>تجویز و توصیهٔ درمانی</dt><dd>{{$c.VetForm.Prescription}}</dd></dl><p class="chat-result-disclaimer">نسخه سند پزشکی است و به معنی فروش یا ارسال دارو نیست.</p>{{if or (eq $c.Role "vet") (eq $c.Role "admin")}}{{if or $c.VetForm.CustomerRating $c.VetForm.CustomerFeedback}}<details class="chat-private-feedback"><summary>ارزیابی اختصاصی دامپزشک دربارهٔ مشتری</summary>{{if $c.VetForm.CustomerRating}}<p>امتیاز تعامل: {{digits (printf "%d" $c.VetForm.CustomerRating)}} از ۵</p>{{end}}{{if $c.VetForm.CustomerFeedback}}<p>{{$c.VetForm.CustomerFeedback}}</p>{{end}}<small>نمایش فقط برای دامپزشک و مدیریت</small></details>{{end}}{{end}}<time class="muted" data-datetime="{{stamp $c.VetForm.At}}">{{stamp $c.VetForm.At}}</time></article>{{end}}
+{{if $c.CustomerForm}}<article class="panel chat-customer-result"><div class="eyebrow">بازخورد مشتری</div><h3>تجربهٔ مشاوره</h3><dl class="chat-score-summary"><div><dt>رضایت کلی</dt><dd>{{digits (printf "%d" $c.CustomerForm.Rating)}} / ۵</dd></div><div><dt>کیفیت ارتباط</dt><dd>{{digits (printf "%d" $c.CustomerForm.Communication)}} / ۵</dd></div><div><dt>وضوح توضیحات</dt><dd>{{digits (printf "%d" $c.CustomerForm.Clarity)}} / ۵</dd></div></dl>{{if $c.CustomerForm.Body}}<p class="chat-feedback-body">{{$c.CustomerForm.Body}}</p>{{end}}<time class="muted" data-datetime="{{stamp $c.CustomerForm.At}}">{{stamp $c.CustomerForm.At}}</time></article>{{end}}
+</div>
+{{end}}
+
+{{define "chat-questionnaire"}}
+{{template "chat-assets" .}}
+{{if .IsManagement}}{{template "management-top" .}}{{else}}{{template "header" .}}{{end}}
+{{$c := .Chat}}
+<main class="chat-questionnaire-page">
+  <div class="chat-breadcrumb"><a href="/chats/{{$c.ID}}">← مشاهدهٔ گفت‌وگو</a><span>پروندهٔ {{$c.PetName}}</span></div>
+  {{template "notice" .}}
+  <div class="chat-questionnaire-intro"><span class="chat-care-mark"><svg class="icon"><use href="#i-{{if eq $c.Role "vet"}}stethoscope{{else}}heart{{end}}"/></svg></span><div><div class="eyebrow">جمع‌بندی ویزیت آنلاین</div><h1>{{if eq $c.Role "vet"}}گزارش پزشکی ویزیت{{else}}تجربهٔ شما از مشاوره{{end}}</h1><p>{{if eq $c.Role "vet"}}اطلاعات درمانی در پروندهٔ {{$c.PetName}} برای مشتری، شما و مدیریت ثبت می‌شود.{{else}}نظر شما به بهتر شدن مراقبت از {{$c.PetName}} و سایر همراهان کوچک کمک می‌کند.{{end}}</p></div></div>
+  {{if and $c.QuestionnaireDone (or (ne $c.Role "vet") (ne $c.State "active"))}}
+  <div class="alert alert-success">پرسشنامهٔ شما ثبت شده و در پرونده محفوظ است.</div>{{template "chat-form-results" .}}<div class="chat-questionnaire-actions"><a class="btn" href="{{$c.BackURL}}">بازگشت به پرونده</a><a class="btn btn-outline" href="/chats/{{$c.ID}}">مشاهدهٔ گفت‌وگو</a></div>
+  {{else if eq $c.Role "vet"}}
+  <form class="panel chat-questionnaire-form" action="/chats/{{$c.ID}}/questionnaire" method="post">
+    {{template "csrf" .}}
+    <div class="chat-form-section"><div class="chat-form-section-title"><span>۱</span><h2>شرح و جمع‌بندی پزشکی</h2></div><label for="chat-symptoms">علائم کلی <span class="chat-required">الزامی</span></label><textarea id="chat-symptoms" name="symptoms" rows="4" maxlength="6000" required placeholder="علائم مشاهده‌شده و شرح حال دریافت‌شده از صاحب حیوان">{{if $c.VetForm}}{{$c.VetForm.Symptoms}}{{end}}</textarea><label for="chat-diagnosis">تشخیص <span class="chat-required">الزامی</span></label><textarea id="chat-diagnosis" name="diagnosis" rows="3" maxlength="6000" required placeholder="تشخیص یا تشخیص‌های احتمالی و نیاز به معاینه یا بررسی تکمیلی">{{if $c.VetForm}}{{$c.VetForm.Diagnosis}}{{end}}</textarea><label for="chat-prescription">تجویز و توصیهٔ درمانی <span class="chat-required">الزامی</span></label><textarea id="chat-prescription" name="prescription" rows="4" maxlength="6000" required placeholder="اقدامات مراقبتی، توصیه‌های درمانی و پیگیری لازم">{{if $c.VetForm}}{{$c.VetForm.Prescription}}{{end}}</textarea><p class="chat-field-hint">این گزارش جایگزین معاینهٔ حضوری نیست. کیپت امکان خرید یا ارسال دارو ندارد.</p></div>
+    <div class="chat-form-section chat-optional-section"><div class="chat-form-section-title"><span>۲</span><h2>ارزیابی مشتری <small>اختیاری</small></h2></div><p class="chat-field-hint">این بخش فقط برای شما و مدیریت نمایش داده می‌شود.</p><label for="chat-customer-rating">کیفیت تعامل با مشتری</label><select id="chat-customer-rating" name="customer_rating"><option value="0">بدون امتیاز</option><option value="1" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 1}}selected{{end}}{{end}}>۱ · بسیار ضعیف</option><option value="2" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 2}}selected{{end}}{{end}}>۲ · ضعیف</option><option value="3" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 3}}selected{{end}}{{end}}>۳ · متوسط</option><option value="4" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 4}}selected{{end}}{{end}}>۴ · خوب</option><option value="5" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 5}}selected{{end}}{{end}}>۵ · عالی</option></select><label for="chat-customer-feedback">یادداشت دربارهٔ مشتری</label><textarea id="chat-customer-feedback" name="customer_feedback" rows="3" maxlength="3000" placeholder="بازخورد اختیاری دربارهٔ همکاری یا کیفیت ارتباط">{{if $c.VetForm}}{{$c.VetForm.CustomerFeedback}}{{end}}</textarea></div>
+    <div class="chat-questionnaire-actions"><button class="btn" type="submit">ثبت گزارش در پرونده</button><a href="/chats/{{$c.ID}}" class="text-link">بازگشت به گفت‌وگو</a></div>
+  </form>
+  {{else if eq $c.Role "owner"}}
+  <form class="panel chat-questionnaire-form" action="/chats/{{$c.ID}}/questionnaire" method="post">
+    {{template "csrf" .}}
+    <fieldset class="chat-rating-field"><legend>از تجربهٔ این مشاوره چقدر رضایت دارید؟</legend><div class="chat-rating-options">{{template "chat-rating-overall" .}}</div></fieldset>
+    <fieldset class="chat-rating-field"><legend>کیفیت ارتباط و توجه دامپزشک چطور بود؟</legend><div class="chat-rating-options">{{template "chat-rating-communication" .}}</div></fieldset>
+    <fieldset class="chat-rating-field"><legend>توضیحات و توصیه‌ها چقدر روشن و قابل فهم بودند؟</legend><div class="chat-rating-options">{{template "chat-rating-clarity" .}}</div></fieldset>
+    <label for="chat-owner-feedback">نکته یا پیشنهادی دارید؟ <span class="chat-field-optional">اختیاری</span></label><textarea id="chat-owner-feedback" name="body" rows="4" maxlength="3000" placeholder="چه چیزی خوب بود و چه چیزی می‌تواند بهتر شود؟">{{if $c.CustomerForm}}{{$c.CustomerForm.Body}}{{end}}</textarea>
+    <p class="chat-field-hint">امتیازها از ۱ (بسیار ضعیف) تا ۵ (عالی) هستند. بازخورد شما برای مدیریت قابل مشاهده است.</p>
+    <div class="chat-questionnaire-actions"><button class="btn" type="submit">ثبت نظر و امتیاز</button><a href="/chats/{{$c.ID}}" class="text-link">بازگشت به گفت‌وگو</a></div>
+  </form>
+  {{else}}<div class="panel">این پرسشنامه توسط مشتری یا دامپزشک ویزیت تکمیل می‌شود.</div>{{end}}
+</main>
+{{end}}
+
+{{define "chat-rating-overall"}}{{$f := .Chat.CustomerForm}}<label><input type="radio" name="rating" value="1" required {{if $f}}{{if eq $f.Rating 1}}checked{{end}}{{end}}><span>۱<small>بسیار ضعیف</small></span></label><label><input type="radio" name="rating" value="2" {{if $f}}{{if eq $f.Rating 2}}checked{{end}}{{end}}><span>۲<small>ضعیف</small></span></label><label><input type="radio" name="rating" value="3" {{if $f}}{{if eq $f.Rating 3}}checked{{end}}{{end}}><span>۳<small>متوسط</small></span></label><label><input type="radio" name="rating" value="4" {{if $f}}{{if eq $f.Rating 4}}checked{{end}}{{end}}><span>۴<small>خوب</small></span></label><label><input type="radio" name="rating" value="5" {{if $f}}{{if eq $f.Rating 5}}checked{{end}}{{end}}><span>۵<small>عالی</small></span></label>{{end}}
+{{define "chat-rating-communication"}}{{$f := .Chat.CustomerForm}}<label><input type="radio" name="communication" value="1" required {{if $f}}{{if eq $f.Communication 1}}checked{{end}}{{end}}><span>۱<small>بسیار ضعیف</small></span></label><label><input type="radio" name="communication" value="2" {{if $f}}{{if eq $f.Communication 2}}checked{{end}}{{end}}><span>۲<small>ضعیف</small></span></label><label><input type="radio" name="communication" value="3" {{if $f}}{{if eq $f.Communication 3}}checked{{end}}{{end}}><span>۳<small>متوسط</small></span></label><label><input type="radio" name="communication" value="4" {{if $f}}{{if eq $f.Communication 4}}checked{{end}}{{end}}><span>۴<small>خوب</small></span></label><label><input type="radio" name="communication" value="5" {{if $f}}{{if eq $f.Communication 5}}checked{{end}}{{end}}><span>۵<small>عالی</small></span></label>{{end}}
+{{define "chat-rating-clarity"}}{{$f := .Chat.CustomerForm}}<label><input type="radio" name="clarity" value="1" required {{if $f}}{{if eq $f.Clarity 1}}checked{{end}}{{end}}><span>۱<small>بسیار ضعیف</small></span></label><label><input type="radio" name="clarity" value="2" {{if $f}}{{if eq $f.Clarity 2}}checked{{end}}{{end}}><span>۲<small>ضعیف</small></span></label><label><input type="radio" name="clarity" value="3" {{if $f}}{{if eq $f.Clarity 3}}checked{{end}}{{end}}><span>۳<small>متوسط</small></span></label><label><input type="radio" name="clarity" value="4" {{if $f}}{{if eq $f.Clarity 4}}checked{{end}}{{end}}><span>۴<small>خوب</small></span></label><label><input type="radio" name="clarity" value="5" {{if $f}}{{if eq $f.Clarity 5}}checked{{end}}{{end}}><span>۵<small>عالی</small></span></label>{{end}}
+
+{{define "chat-archives"}}
+{{template "chat-assets" .}}
+{{if .IsManagement}}{{template "management-top" .}}{{else}}{{template "header" .}}{{end}}
+<main class="chat-archive-page"><div class="chat-breadcrumb"><a href="{{if .IsManagement}}/management{{else if eq .User.Role "provider"}}/provider{{else}}/dashboard{{end}}">← بازگشت به پنل</a></div><div class="chat-archive-heading"><div><div class="eyebrow">پروندهٔ ویزیت‌ها</div><h1>{{if .IsManagement}}گفت‌وگوهای دامپزشکی{{else}}گفت‌وگوهای من{{end}}</h1><p>پیام‌ها، تصویرها، صداها و جمع‌بندی هر ویزیت در کنار هم.</p></div><span class="chat-care-mark"><svg class="icon"><use href="#i-chat"/></svg></span></div>{{template "notice" .}}<div class="chat-archive-list">{{range .Chats}}{{template "chat-entry" .}}{{else}}<div class="panel chat-empty"><h2>هنوز گفت‌وگویی ثبت نشده است</h2><p>بعد از شروع ویزیت آنلاین، اتاق گفت‌وگو در این بخش نمایش داده می‌شود.</p></div>{{end}}</div></main>
+{{end}}
+
+{{define "chat-entry"}}
+<article class="chat-entry"><div class="chat-entry-icon"><svg class="icon"><use href="#i-chat"/></svg></div><div class="chat-entry-main"><a href="{{if eq .Role "admin"}}/management/chats/{{.ID}}{{else}}/chats/{{.ID}}{{end}}"><h3>ویزیت {{.PetName}}</h3></a><p>{{.OtherName}} · کد {{short .BookingID}}</p><div class="chat-entry-dates">{{if .StartedAt}}<span>شروع <time data-datetime="{{iso .StartedAt}}">{{iso .StartedAt}}</time></span>{{end}}{{if .ArchivedAt}}<span>بایگانی <time data-datetime="{{iso .ArchivedAt}}">{{iso .ArchivedAt}}</time></span>{{else if .ExpiresAt}}<span>پایان مهلت <time data-datetime="{{iso .ExpiresAt}}">{{iso .ExpiresAt}}</time></span>{{end}}</div></div><div class="chat-entry-actions"><span class="chat-status chat-status-{{.State}}">{{template "chat-state" .State}}</span><a class="btn btn-outline btn-small" href="{{if eq .Role "admin"}}/management/chats/{{.ID}}{{else}}/chats/{{.ID}}{{end}}">{{if eq .State "archived"}}مشاهدهٔ بایگانی{{else}}ورود به گفت‌وگو{{end}}</a>{{if and (ne .Role "admin") (not .QuestionnaireDone)}}<a class="chat-pending-form" href="/chats/{{.ID}}/questionnaire">پرسشنامهٔ شما تکمیل نشده</a>{{end}}</div></article>
+{{end}}

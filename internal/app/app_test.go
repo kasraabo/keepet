@@ -318,6 +318,23 @@ func TestIntegration(t *testing.T) {
 				if code != 200 {
 					t.Fatalf("result %d: %s", code, html)
 				}
+			} else if svc == "vet" {
+				var chatID string
+				if err := a.DB.QueryRow(ctx, "SELECT id FROM consultation_chats WHERE booking_id=$1", id).Scan(&chatID); err != nil {
+					t.Fatal(err)
+				}
+				html, code = pb.post("/chats/"+chatID+"/end", nil)
+				if code != 200 {
+					t.Fatalf("end consultation %d: %s", code, html)
+				}
+				html, code = pb.post("/chats/"+chatID+"/questionnaire", url.Values{"symptoms": {"شرح علائم آزمایشی"}, "diagnosis": {"تشخیص آزمایشی و نیاز به معاینه"}, "prescription": {"خلاصه مشاوره آزمایشی <script>alert(1)</script>"}})
+				if code != 200 {
+					t.Fatalf("clinical questionnaire %d: %s", code, html)
+				}
+				html, code = owner.post("/chats/"+chatID+"/questionnaire", url.Values{"rating": {"5"}, "communication": {"5"}, "clarity": {"4"}, "body": {"تجربه خوب"}})
+				if code != 200 {
+					t.Fatalf("customer questionnaire %d: %s", code, html)
+				}
 			} else {
 				html, code = pb.post("/provider/bookings/"+id, url.Values{"action": {"complete"}, "prescription": {"خلاصه مشاوره آزمایشی <script>alert(1)</script>"}})
 				if code != 200 {

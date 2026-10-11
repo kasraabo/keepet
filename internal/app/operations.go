@@ -30,6 +30,11 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 	p.Tickets, _ = a.tickets(r, "")
+	p.Chats, err = a.chatSummaries(r, "")
+	if err != nil {
+		a.fail(w, r, "گفتگوها بارگذاری نشد", 500)
+		return
+	}
 	a.render(w, r, "ops", p)
 }
 func validMeeting(s string) bool {
@@ -294,6 +299,11 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	p.Chats, err = a.chatSummaries(r, "")
+	if err != nil {
+		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
+		return
+	}
 	a.render(w, r, "provider", p)
 }
 func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
@@ -317,6 +327,13 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.FormValue("action")
+	chatID := ""
+	if b.Service == "vet" && action == "complete" {
+		// Clinical completion belongs to the participant questionnaire; the old
+		// prescription-only action cannot bypass it.
+		a.fail(w, r, "پایان ویزیت و ثبت گزارش پزشکی را از داخل گفتگو انجام دهید", 409)
+		return
+	}
 	next, detail := "", ""
 	switch action {
 	case "accept":
@@ -331,8 +348,25 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 		}
 	case "start":
 		if b.Status == "accepted" {
+			if b.Service == "vet" {
+				chatID, err = a.beginChat(ctx, tx, b)
+				if err != nil {
+					a.fail(w, r, "شروع گفتگو ممکن نیست؛ صلاحیت و پرداخت را بررسی کنید", 409)
+					return
+				}
+			}
 			next = "in_progress"
 			detail = "خدمت شروع شد."
+		}
+	case "start_chat":
+		if b.Service == "vet" && b.Status == "in_progress" {
+			chatID, err = a.beginChat(ctx, tx, b)
+			if err != nil {
+				a.fail(w, r, "گفتگو قابل شروع نیست", 409)
+				return
+			}
+			next = "in_progress"
+			detail = "گفتگوی داخلی برای ویزیت قبلی فعال شد."
 		}
 	case "collected":
 		if b.Service == "sampling" && b.Status == "in_progress" {
@@ -346,10 +380,6 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 		}
 	case "complete":
 		if b.Status == "in_progress" && b.Service != "sampling" {
-			if b.Service == "vet" && strings.TrimSpace(r.FormValue("prescription")) == "" {
-				a.fail(w, r, "خلاصهٔ مشاوره و نسخه را ثبت کنید", 400)
-				return
-			}
 			next = "completed"
 			detail = "خدمت تکمیل شد."
 		}
@@ -358,7 +388,7 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ترتیب مراحل رعایت نشده است", 409)
 		return
 	}
-	_, err = tx.Exec(ctx, "UPDATE bookings SET status=$2,prescription=CASE WHEN $3='' THEN prescription ELSE $3 END WHERE id=$1", b.ID, next, r.FormValue("prescription"))
+	_, err = tx.Exec(ctx, "UPDATE bookings SET status=$2 WHERE id=$1", b.ID, next)
 	if next == "paid" && err == nil {
 		_, err = tx.Exec(ctx, "UPDATE bookings SET exact_time=NULL,meeting_url='' WHERE id=$1", b.ID)
 	}
@@ -370,6 +400,10 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		a.fail(w, r, "تغییر ثبت نشد", 500)
+		return
+	}
+	if chatID != "" {
+		redirect(w, r, "/chats/"+chatID)
 		return
 	}
 	redirect(w, r, "/provider")

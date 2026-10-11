@@ -27,10 +27,12 @@ import (
 )
 
 type App struct {
-	DB        *pgxpool.Pool
-	Templates *template.Template
-	Location  *time.Location
-	Triage    []Question
+	DB         *pgxpool.Pool
+	Templates  *template.Template
+	Location   *time.Location
+	Triage     []Question
+	chatCancel context.CancelFunc
+	chatDone   chan struct{}
 }
 
 func New(ctx context.Context) (*App, error) {
@@ -117,9 +119,16 @@ func New(ctx context.Context) (*App, error) {
 		db.Close()
 		return nil, err
 	}
+	a.startChatMaintenance()
 	return a, nil
 }
-func (a *App) Close() { a.DB.Close() }
+func (a *App) Close() {
+	if a.chatCancel != nil {
+		a.chatCancel()
+		<-a.chatDone
+	}
+	a.DB.Close()
+}
 func token() string {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -166,7 +175,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/sw.js" || r.URL.Path == "/manifest.webmanifest" {
 			next.ServeHTTP(w, r)
 			return
@@ -192,13 +201,32 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		}
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
-			r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-			if r.ParseForm() != nil {
-				http.Error(w, "فرم نامعتبر است", 400)
+			var parseErr error
+			if strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+				// Keep ordinary requests short, while allowing bounded mobile uploads.
+				controller := http.NewResponseController(w)
+				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
+				_ = controller.SetWriteDeadline(time.Now().Add(120 * time.Second))
+				r.Body = http.MaxBytesReader(w, r.Body, 14<<20)
+				parseErr = r.ParseMultipartForm(1 << 20)
+				if r.MultipartForm != nil {
+					defer r.MultipartForm.RemoveAll()
+				}
+			} else {
+				r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+				parseErr = r.ParseForm()
+			}
+			if parseErr != nil {
+				code := 400
+				var tooLarge *http.MaxBytesError
+				if errors.As(parseErr, &tooLarge) {
+					code = 413
+				}
+				a.chatFailure(w, r, "فرم نامعتبر است یا حجم فایل بیش از حد مجاز است", code)
 				return
 			}
 			if r.FormValue("csrf") != s.CSRF {
-				http.Error(w, "نشست فرم منقضی شده؛ صفحه را تازه کنید", 403)
+				a.chatFailure(w, r, "نشست فرم منقضی شده؛ صفحه را تازه کنید", 403)
 				return
 			}
 		}
@@ -244,6 +272,21 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /bookings/{id}/replacement", a.replacement)
 	m.HandleFunc("POST /bookings/{id}/review", a.review)
 	m.HandleFunc("POST /pets", a.addPet)
+	m.HandleFunc("GET /chats", a.chatArchive)
+	m.HandleFunc("GET /chats/{id}", a.chatPage)
+	m.HandleFunc("GET /chats/{id}/messages", a.chatPoll)
+	m.HandleFunc("POST /chats/{id}/messages", a.chatSend)
+	m.HandleFunc("POST /chats/{id}/end", a.chatEnd)
+	m.HandleFunc("GET /chats/{id}/questionnaire", a.chatQuestionnairePage)
+	m.HandleFunc("POST /chats/{id}/questionnaire", a.chatQuestionnaire)
+	m.HandleFunc("GET /chat-media/{id}", a.chatMedia)
+	m.HandleFunc("GET /management/chats", a.chatArchive)
+	m.HandleFunc("GET /management/chats/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if a.auth(w, r, "admin", "ops") {
+			a.chatPage(w, r)
+		}
+	})
+	m.HandleFunc("POST /management/chats/{id}/duration", a.changeChatDuration)
 	m.HandleFunc("GET /ops", a.ops)
 	m.HandleFunc("POST /ops/bookings/{id}", a.opsAction)
 	m.HandleFunc("POST /ops/availability", a.addAvailability)

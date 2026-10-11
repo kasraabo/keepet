@@ -76,6 +76,8 @@ type Application struct {
 }
 type Ticket struct{ ID, Subject, Body, Reply, Status string }
 type Page struct {
+	Chat      *ChatView
+	Chats     []ChatSummary
 	OTPResend int
 
 	IsManagement bool

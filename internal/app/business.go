@@ -15,8 +15,9 @@ import (
 )
 
 type BusinessData struct {
-	ReviewedBy string     `json:"reviewed_by,omitempty"`
-	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	DurationMinutes int        `json:"duration_minutes,omitempty"`
+	ReviewedBy      string     `json:"reviewed_by,omitempty"`
+	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 
 	Name       string     `json:"name"`
 	Body       string     `json:"body"`
@@ -93,6 +94,9 @@ func (a *App) seedBusiness(ctx context.Context) error {
 		}
 	}
 	if e := a.seedIntegrations(ctx); e != nil {
+		return e
+	}
+	if e := put("chat", "consultation", BusinessData{Name: "گفتگوی دامپزشکی", DurationMinutes: 30, Enabled: true}); e != nil {
 		return e
 	}
 	return put("triage", "vet", BusinessData{Questions: a.Triage, Enabled: true})
@@ -401,7 +405,7 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 	}
 	kind, id := r.PathValue("kind"), r.PathValue("id")
 	ctx := r.Context()
-	if !contains([]string{"service", "area", "grooming", "sampling", "triage", "provider", "banner", "article"}, kind) || !businessID.MatchString(id) {
+	if !contains([]string{"service", "area", "grooming", "sampling", "triage", "provider", "banner", "article", "chat"}, kind) || !businessID.MatchString(id) || kind == "chat" && id != "consultation" {
 		a.fail(w, r, "تنظیم نامعتبر", 400)
 		return
 	}
@@ -463,7 +467,15 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 		}
 		old := d
 		d.Enabled = r.FormValue("enabled") == "on"
-		if kind == "triage" {
+		if kind == "chat" {
+			section = "integrations"
+			d.DurationMinutes, e = strconv.Atoi(normalize(r.FormValue("duration_minutes")))
+			if e != nil || d.DurationMinutes < 5 || d.DurationMinutes > 240 {
+				a.fail(w, r, "مدت گفتگو باید بین ۵ تا ۲۴۰ دقیقه باشد", 400)
+				return
+			}
+			d.Enabled = true
+		} else if kind == "triage" {
 			section = "triage"
 			if r.FormValue("mode") == "simple" {
 				for i := range d.Questions {

@@ -6,6 +6,7 @@ require (
 	github.com/a-h/templ v0.3.960
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/jackc/pgx/v5 v5.7.6
+	golang.org/x/image v0.30.0
 )
 
 require (
@@ -18,5 +19,5 @@ require (
 	go.uber.org/atomic v1.7.0 // indirect
 	golang.org/x/crypto v0.37.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 )

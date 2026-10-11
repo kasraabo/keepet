@@ -355,6 +355,11 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			p.Pets = append(p.Pets, map[string]string{"id": id, "name": name, "species": sp, "age": age, "weight": weight})
 		}
 	}
+	p.Chats, err = a.chatSummaries(r, "")
+	if err != nil {
+		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
+		return
+	}
 	a.render(w, r, "dashboard", p)
 }
 func (a *App) detail(w http.ResponseWriter, r *http.Request) {
@@ -377,6 +382,11 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 			rows.Scan(&e.Event, &e.Detail, &e.At)
 			p.Events = append(p.Events, e)
 		}
+	}
+	p.Chats, err = a.chatSummaries(r, b.ID)
+	if err != nil {
+		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
+		return
 	}
 	a.render(w, r, "detail", p)
 }
