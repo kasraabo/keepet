@@ -48,6 +48,8 @@ type Booking struct {
 	PaidAt, ExactTime                                                                                                                                                                                                                           *time.Time
 }
 type Slot struct {
+	Used int
+
 	ID, ProviderID, Day, Period string
 	Capacity                    int
 	Start                       time.Time

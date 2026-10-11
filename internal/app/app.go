@@ -251,6 +251,7 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /ops/tickets/{id}", a.replyTicket)
 	m.HandleFunc("GET /provider", a.providerPanel)
 	m.HandleFunc("POST /provider/bookings/{id}", a.providerAction)
+	m.HandleFunc("POST /provider/availability", a.providerAvailability)
 	m.HandleFunc("GET /join", a.join)
 	m.HandleFunc("POST /join", a.apply)
 	m.HandleFunc("GET /support", a.support)

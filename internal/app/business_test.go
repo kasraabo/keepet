@@ -223,6 +223,75 @@ func TestBusiness(t *testing.T) {
 			t.Fatal("unreviewed article public")
 		}
 	})
+	t.Run("provider availability ownership capacity and customer visibility", func(t *testing.T) {
+		day := time.Now().In(a.Location).AddDate(0, 0, 8).Format("2006-01-02")
+		v := url.Values{"day": {day}, "period": {"noon"}, "capacity": {"2"}, "provider": {"groom-sara"}}
+		h, c := vet.post("/provider/availability", v)
+		if c != 200 || !strings.Contains(h, "زمان‌های کاری من") {
+			t.Fatalf("vet availability %d %s", c, h)
+		}
+		var slot string
+		var cap int
+		e := a.DB.QueryRow(ctx, "SELECT id,capacity FROM availability WHERE provider_id='vet-nazanin' AND day=$1 AND period='noon'", day).Scan(&slot, &cap)
+		if e != nil || cap != 2 {
+			t.Fatal("vet slot not saved")
+		}
+		var other int
+		a.DB.QueryRow(ctx, "SELECT count(*) FROM availability WHERE provider_id='groom-sara' AND day=$1 AND period='noon'", day).Scan(&other)
+		if other != 0 {
+			t.Fatal("provider field allowed modifying another provider")
+		}
+		v.Set("csrf", groom.csrf)
+		if h, c = groom.post("/provider/availability", v); c != 200 {
+			t.Fatalf("groomer could not save availability %d %s", c, h)
+		}
+		slots, e := a.slots(ctx, Booking{Service: "vet", Species: "cat", ProviderID: "vet-nazanin"})
+		found := false
+		for _, x := range slots {
+			if x.ID == slot {
+				found = true
+			}
+		}
+		if e != nil || !found {
+			t.Fatal("provider slot not visible to customer")
+		}
+		v.Set("csrf", vet.csrf)
+		var session string
+		a.DB.QueryRow(ctx, "SELECT token FROM sessions WHERE user_id='demo-vet' LIMIT 1").Scan(&session)
+		_, e = a.DB.Exec(ctx, "INSERT INTO bookings(id,session_token,owner_id,service,provider_id,availability_id,amount,payment_key,payment_status,status,paid_at) VALUES($1,$2,'demo-vet','vet','vet-nazanin',$3,350000,$4,'paid','paid',now())", token(), session, slot, token())
+		if e != nil {
+			t.Fatal(e)
+		}
+		v.Set("capacity", "0")
+		if _, c = vet.post("/provider/availability", v); c != 409 {
+			t.Fatal("capacity reduced below reservations")
+		}
+		v.Set("capacity", "1")
+		if _, c = vet.post("/provider/availability", v); c != 200 {
+			t.Fatal("valid capacity update failed")
+		}
+		slots, e = a.slots(ctx, Booking{Service: "vet", Species: "cat", ProviderID: "vet-nazanin"})
+		for _, x := range slots {
+			if x.ID == slot {
+				t.Fatal("full slot still bookable")
+			}
+		}
+		v.Set("day", time.Now().In(a.Location).AddDate(0, 0, -1).Format("2006-01-02"))
+		if _, c = vet.post("/provider/availability", v); c != 400 {
+			t.Fatal("past day accepted")
+		}
+		v.Set("csrf", ops.csrf)
+		if _, c = ops.post("/provider/availability", v); c != 403 {
+			t.Fatal("non-provider accepted")
+		}
+		v.Set("csrf", vet.csrf)
+		v.Set("day", day)
+		v.Set("period", "night")
+		v.Set("capacity", "0")
+		if _, c = vet.post("/provider/availability", v); c != 200 {
+			t.Fatal("could not close unreserved slot")
+		}
+	})
 	t.Run("commission snapshot actual payment and payout idempotency", func(t *testing.T) {
 		save("service", "vet", url.Values{"commission": {"2000"}}, 200)
 		var session string
