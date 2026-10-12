@@ -4,3 +4,5 @@ bin
 node_modules
 test-results
 *.log
+*.bak
+*.network-backup

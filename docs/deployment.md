@@ -14,7 +14,9 @@ Dockerfile چندمرحله‌ای، build بدون CGO، اجرای برنام�
 DOCKER_CONFIG=/workspace/.cache/docker docker build -t keepet:dev .
 ```
 
-compose دارای password عمومیِ **فقط توسعهٔ محلی** است؛ secret production محسوب نمی‌شود. قبل از deployment عمومی این mode و seedها باید با integrationهای واقعی جایگزین شوند. `APP_MODE=production` اکنون fail-closed است و برنامه production-ready نیست.
+compose دارای password عمومیِ **فقط توسعهٔ محلی** است؛ secret production محسوب نمی‌شود. `APP_MODE=production` اکنون fail-closed است و برنامه production-ready نیست. نسخهٔ آزمایشی با پذیرش کاربر برای تست روی آروان قابل اجراست؛ تنظیم دسترسی شبکه باید مطابق مخاطبان همان محیط تست باشد.
+
+وابستگی‌های Go در `vendor/` همراه پروژه نگهداری می‌شوند. مرحلهٔ کامپایل Docker با `-mod=vendor`، `GOPROXY=off` و شبکهٔ غیرفعال اجرا می‌شود؛ دانلود فایل‌های ماژول از proxy.golang.org روی سرور لازم نیست. دریافت imageهای پایهٔ Docker هنوز به اتصال رجیستری نیاز دارد. هنگام تغییر وابستگی‌ها، ابتدا `go mod download` و `go mod verify`، سپس `go mod vendor` اجرا و تغییرات vendor همراه go.mod/go.sum بررسی شوند. نسخهٔ فعلی vendor از cache ماژول‌های تأییدشده تولید شده است؛ بررسی TLS یا checksum برای رفع خطای شبکه غیرفعال نشده است.
 
 ## مرحلهٔ ابرآروان
 
@@ -28,17 +30,12 @@ OTP مستقیم از برنامه به کاوه‌نگار، سایر پیام�
 
 پروندهٔ گفتگو، پیام‌ها، تصویرها، پیام‌های صوتی و پرسشنامه‌ها در PostgreSQL نگهداری می‌شوند و با بازسازی image از بین نمی‌روند. به‌روزرسانی با `docker compose down` و سپس `up --build` volumeها را حفظ می‌کند؛ `down -v` داده را حذف می‌کند. برای حفظ فایل‌های گفتگو هم از volume دیتابیس بکاپ/restore بگیرید. محدودیت بدنه و timeoutهای reverse proxy باید با فایل صوتی ۱۲MiB و سربار multipart سازگار باشند. ضبط میکروفون در مرورگر به HTTPS یا localhost، اجازهٔ کاربر و پشتیبانی MediaRecorder نیاز دارد؛ ارسال فایل صوتی جایگزین است. [گفتگو و محدودیت‌ها](consultation-chat.md).
 
-در cloud، Docker build ممکن است DNS کانتینر پراکسی و CA آن را به ارث نبرد. مسیر آزمایش‌شدهٔ build با bundle معتبر همان ماشین، بدون غیرفعال‌سازی TLS:
+در محیط cloud، رجیستری Docker از تنظیمات پراکسی daemon استفاده می‌کند. نسخهٔ فعلی Dockerfile دانلود Go ندارد و برای مرحلهٔ کامپایل به proxy یا گواهی اضافه نیاز ندارد. دستور ساخت:
 
 ```bash
-DOCKER_CONFIG=/workspace/.cache/docker docker build \
-  --network host \
-  --add-host "proxy:$(getent ahostsv4 proxy | awk 'NR==1{print $1}')" \
-  --build-arg HTTP_PROXY --build-arg HTTPS_PROXY --build-arg NO_PROXY \
-  --secret id=build_ca,src=/etc/ssl/certs/ca-certificates.crt \
-  -t keepet:dev .
+DOCKER_CONFIG=/workspace/.cache/docker docker build -t keepet:dev .
 ```
 
-این تنظیم مخصوص پراکسی cloud است. bundle از secret mount فقط هنگام build استفاده می‌شود و در image یا repository ذخیره نمی‌شود. در ماشین دارای اتصال عادی، `docker build -t keepet:dev .` کافی است.
+تأیید TLS هنگام دریافت imageها باقی می‌ماند. در ماشین دارای تنظیم Docker عادی، `docker build -t keepet:dev .` کافی است.
 
 تنظیمات رمزگذاری‌شدهٔ درگاه، SMS و SMTP در پنل مدیریت ذخیره می‌شوند، ولی آداپترهای ارسال و پرداخت واقعی هنوز فعال نیستند. در Docker، volume جدید `app-secrets` کلید را نگه می‌دارد؛ پشتیبان این volume مستقل از PostgreSQL لازم است. [راهنمای مدیریت و نگهداری اعتبارنامه](platform-management.md).
