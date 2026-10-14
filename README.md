@@ -82,3 +82,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 فضای مستقل مدیریت، گزارش‌ها و تنظیمات پرداخت/OTP: [docs/platform-management.md](docs/platform-management.md).
 
 مدیریت فرم‌ها، انتخاب پت قبلی، تقویم شمسی، پروفایل و گالری متخصصان، FAQ و پنل مستقل محتوا/SEO: [راهنمای امکانات و به‌روزرسانی](docs/product-configuration.md).
+
+راهنمای کامل کار با سایت برای تمام نقش‌ها، همراه حساب‌های تست و لینک‌های کلیک‌پذیر: [دانلود PDF فارسی](docs/keepet-user-guide-fa.pdf) · [نسخهٔ HTML مستقل](docs/user-guide-fa.html). برای بازسازی فایل: `python3 scripts/build-user-guide.py` سپس `node scripts/build-user-guide.cjs` (نیازمند Chromium، Playwright و PyMuPDF).
