@@ -188,6 +188,11 @@ func (a *App) seedEditorial(ctx context.Context) error {
 	for _, slug := range []string{"about", "contact", "magazine", "careers", "terms", "privacy", "refund", "telemedicine"} {
 		entries = append(entries, BusinessRecord{Kind: "seo", ID: "page-" + slug, Data: BusinessData{Name: "کیپت", Description: "اطلاعات خدمات، قوانین و مراقبت از حیوانات خانگی در کیپت.", Link: "/pages/" + slug, Enabled: false}})
 	}
+	for slug, page := range publicPages {
+		if slug != "magazine" {
+			entries = append(entries, BusinessRecord{Kind: "page", ID: slug, Data: BusinessData{Name: page[0], Body: page[1], Enabled: true}})
+		}
+	}
 	for _, rec := range entries {
 		if _, e = a.DB.Exec(ctx, "INSERT INTO business_config(kind,id,data) VALUES($1,$2,$3) ON CONFLICT DO NOTHING", rec.Kind, rec.ID, mustJSON(rec.Data)); e != nil {
 			return e

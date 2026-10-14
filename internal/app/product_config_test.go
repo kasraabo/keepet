@@ -181,6 +181,19 @@ func TestProductConfiguration(t *testing.T) {
 		if !strings.Contains(body, "rel=\"canonical\"") {
 			t.Fatal("canonical absent")
 		}
+		var pageRev int
+		a.DB.QueryRow(ctx, "SELECT revision FROM business_config WHERE kind='page' AND id='about'").Scan(&pageRev)
+		if _, code := content.post("/content/page/about", url.Values{"revision": {fmt.Sprint(pageRev)}, "name": {"دربارهٔ کیپت"}, "body": {"متن تازه دربارهٔ ما"}, "enabled": {"on"}}); code != 200 {
+			t.Fatal("existing page not editable")
+		}
+		edited, _ := guest.get("/pages/about")
+		if !strings.Contains(edited, "متن تازه دربارهٔ ما") {
+			t.Fatal("existing page text not live")
+		}
+		magazine, _ := guest.get("/pages/magazine")
+		if !strings.Contains(magazine, "مقاله‌های بازبینی‌شده") {
+			t.Fatal("magazine overridden by seed")
+		}
 		if _, code := owner.get("/content"); code != 403 {
 			t.Fatal("owner entered editor")
 		}
