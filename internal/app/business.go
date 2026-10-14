@@ -19,13 +19,14 @@ type BusinessData struct {
 	ReviewedBy      string     `json:"reviewed_by,omitempty"`
 	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
 
-	Name       string     `json:"name"`
-	Body       string     `json:"body"`
-	Link       string     `json:"link"`
-	Enabled    bool       `json:"enabled"`
-	Price      int64      `json:"price"`
-	Commission int        `json:"commission"`
-	Questions  []Question `json:"questions,omitempty"`
+	Description string     `json:"description,omitempty"`
+	Name        string     `json:"name"`
+	Body        string     `json:"body"`
+	Link        string     `json:"link"`
+	Enabled     bool       `json:"enabled"`
+	Price       int64      `json:"price"`
+	Commission  int        `json:"commission"`
+	Questions   []Question `json:"questions,omitempty"`
 }
 type BusinessRecord struct {
 	Kind, ID string
@@ -99,7 +100,10 @@ func (a *App) seedBusiness(ctx context.Context) error {
 	if e := put("chat", "consultation", BusinessData{Name: "گفتگوی دامپزشکی", DurationMinutes: 30, Enabled: true}); e != nil {
 		return e
 	}
-	return put("triage", "vet", BusinessData{Questions: a.Triage, Enabled: true})
+	if e := put("triage", "vet", BusinessData{Questions: a.Triage, Enabled: true}); e != nil {
+		return e
+	}
+	return a.seedForms(ctx)
 }
 func (a *App) records(ctx context.Context, kind string) ([]BusinessRecord, error) {
 	rows, e := a.DB.Query(ctx, "SELECT kind,id,revision,data FROM business_config WHERE ($1='' OR kind=$1) ORDER BY kind,id", kind)
@@ -327,6 +331,11 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "خواندن مشتریان ناموفق بود", 500)
 		return
 	}
+	if section == "customers" {
+		for i := range b.Users {
+			b.Users[i].Form = a.savedForm(ctx, "signup-owner", b.Users[i].ID)
+		}
+	}
 	rows, e = a.DB.Query(ctx, "SELECT COALESCE(u.name,'حساب حذف‌شده'),a.kind,a.target,COALESCE(a.before_data::text,''),COALESCE(a.after_data::text,''),a.created_at FROM business_audit a LEFT JOIN users u ON u.id=a.actor_id ORDER BY a.id DESC LIMIT 100")
 	if e != nil {
 		a.fail(w, r, "خواندن تاریخچه ناموفق بود", 500)
@@ -366,11 +375,11 @@ func validateQuestions(qs []Question) error {
 		}
 	}
 	for _, q := range qs {
-		if !businessID.MatchString(q.ID) || seen[q.ID] || strings.TrimSpace(q.Label) == "" || len(q.Label) > 500 || !contains([]string{"select", "textarea"}, q.Type) {
+		if !businessID.MatchString(q.ID) || seen[q.ID] || strings.TrimSpace(q.Label) == "" || len(q.Label) > 500 || !contains([]string{"text", "textarea", "select", "radio", "checkbox", "number", "email", "date"}, q.Type) {
 			return fmt.Errorf("شناسه، عنوان یا نوع پرسش نامعتبر است")
 		}
 		seen[q.ID] = true
-		if q.Type == "select" {
+		if q.Type == "select" || q.Type == "radio" {
 			if len(q.Options) < 1 || len(q.Options) > 30 {
 				return fmt.Errorf("گزینه‌های انتخابی لازم‌اند")
 			}
@@ -400,7 +409,11 @@ func validInternalLink(v string) bool {
 	return e == nil && strings.HasPrefix(v, "/") && !strings.HasPrefix(v, "//") && !strings.ContainsAny(v, "\\\r\n") && u.Host == "" && u.Scheme == "" && !strings.HasPrefix(v, "/admin") && !strings.HasPrefix(v, "/ops")
 }
 func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
-	if !a.auth(w, r, "admin") {
+	if strings.HasPrefix(r.URL.Path, "/content/article/") {
+		if !a.auth(w, r, "admin", "content") {
+			return
+		}
+	} else if !a.auth(w, r, "admin") {
 		return
 	}
 	kind, id := r.PathValue("kind"), r.PathValue("id")
@@ -541,6 +554,11 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 			_, e = tx.Exec(ctx, "UPDATE business_config SET data=$3,revision=revision+1 WHERE kind=$1 AND id=$2", kind, id, after)
 		}
 	}
+	if e == nil && kind == "triage" {
+		var d BusinessData
+		json.Unmarshal(after, &d)
+		_, e = tx.Exec(ctx, "UPDATE business_config SET data=jsonb_set(data,'{questions}',$1),revision=revision+1 WHERE kind='form' AND id='vet'", mustJSON(d.Questions))
+	}
 	if e == nil {
 		_, e = tx.Exec(ctx, "INSERT INTO business_audit(actor_id,kind,target,before_data,after_data) VALUES($1,$2,$3,$4,$5)", sess(r).User.ID, kind, id, before, after)
 	}
@@ -549,6 +567,10 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 	}
 	if e != nil {
 		a.fail(w, r, "ذخیره نشد؛ دوباره تلاش کنید", 500)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/content/") {
+		redirect(w, r, noticeURL("/content", "مقاله ذخیره شد"))
 		return
 	}
 	redirect(w, r, noticeURL("/management/"+section, "تغییرات ذخیره شد و در محصول اعمال می‌شود."))

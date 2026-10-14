@@ -80,3 +80,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 راهنمای پنل بیزینس: [docs/business-admin.md](docs/business-admin.md).
 
 فضای مستقل مدیریت، گزارش‌ها و تنظیمات پرداخت/OTP: [docs/platform-management.md](docs/platform-management.md).
+
+مدیریت فرم‌ها، انتخاب پت قبلی، تقویم شمسی، پروفایل و گالری متخصصان، FAQ و پنل مستقل محتوا/SEO: [راهنمای امکانات و به‌روزرسانی](docs/product-configuration.md).

@@ -36,7 +36,7 @@ func (a *App) assignmentSlots(ctx context.Context, b Booking) ([]Slot, error) {
 }
 
 func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next string) {
-	day, err := time.ParseInLocation("2006-01-02", r.FormValue("day"), a.Location)
+	day, err := parseCalendar(r.FormValue("day"), a.Location)
 	cap, e := strconv.Atoi(normalize(r.FormValue("capacity")))
 	prd := r.FormValue("period")
 	today, _ := time.ParseInLocation("2006-01-02", time.Now().In(a.Location).Format("2006-01-02"), a.Location)

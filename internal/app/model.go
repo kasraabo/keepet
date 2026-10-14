@@ -15,10 +15,14 @@ type Question struct {
 	Label    string           `json:"label"`
 	Type     string           `json:"type"`
 	Required bool             `json:"required"`
+	Private  bool             `json:"private,omitempty"`
 	When     string           `json:"when"`
 	Options  []QuestionOption `json:"options"`
 }
-type User struct{ ID, Phone, Name, Role string }
+type User struct {
+	ID, Phone, Name, Role string
+	Form                  FormView
+}
 type Session struct {
 	Token, CSRF string
 	User        *User
@@ -31,6 +35,7 @@ type Service struct {
 var Services = []Service{{"vet", "دامپزشک آنلاین", "مشاوره دامپزشکی", "یک گفت‌وگوی مطمئن، برای روزهایی که نگرانش هستید.", "stethoscope", "mint", 350000}, {"grooming", "گرومینگ در منزل", "گرومینگ و پیرایش", "تمیز، مرتب و خوشحال؛ در آرامش خانهٔ خودتان.", "scissors", "peach", 250000}, {"sampling", "نمونه‌برداری در منزل", "آزمایش و نمونه‌برداری", "بدون استرس رفت‌وآمد؛ از نمونه‌گیری تا دریافت نتیجه.", "test", "lavender", 450000}}
 
 type Provider struct {
+	Portrait                                        string
 	ID, UserID, Name, Service, Bio, License, Avatar string
 	Verified, Active                                bool
 	Species, Areas                                  []string
@@ -88,11 +93,23 @@ type Event struct {
 	At            time.Time
 }
 type Application struct {
+	Form                                                          FormView
 	ID, UserID, Service, Name, License, Bio, Area, Status, Reason string
 	Price                                                         int64
 }
-type Ticket struct{ ID, Subject, Body, Reply, Status string }
+type Ticket struct {
+	ID, Subject, Body, Reply, Status, Email string
+	Form                                    FormView
+}
 type Page struct {
+	Form    FormView
+	PetForm FormView
+	Forms   []FormView
+	FAQs    []BusinessRecord
+	Profile *SpecialistProfile
+	SEO     SEOData
+	SEOBody string
+
 	AssignmentSlots map[string][]Slot
 	Chat            *ChatView
 	Chats           []ChatSummary

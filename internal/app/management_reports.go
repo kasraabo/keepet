@@ -42,13 +42,13 @@ func reportRange(r *http.Request, loc *time.Location) (time.Time, time.Time, err
 	to := today
 	var e error
 	if s := r.URL.Query().Get("from"); s != "" {
-		from, e = time.ParseInLocation("2006-01-02", s, loc)
+		from, e = parseCalendar(s, loc)
 		if e != nil {
 			return from, to, e
 		}
 	}
 	if s := r.URL.Query().Get("to"); s != "" {
-		to, e = time.ParseInLocation("2006-01-02", s, loc)
+		to, e = parseCalendar(s, loc)
 		if e != nil {
 			return from, to, e
 		}

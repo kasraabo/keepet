@@ -1,5 +1,5 @@
 function enhance(root=document){
- const date=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{day:'numeric',month:'long',weekday:'short',timeZone:'Asia/Tehran'});
+ const date=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{day:'numeric',month:'long',year:'numeric',weekday:'short',timeZone:'Asia/Tehran'});
  const datetime=new Intl.DateTimeFormat('fa-IR-u-ca-persian',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'Asia/Tehran'});
  root.querySelectorAll('[data-date]').forEach(el=>{const d=new Date(el.dataset.date+'T12:00:00+03:30');if(!isNaN(d))el.textContent=date.format(d)});
  root.querySelectorAll('[data-datetime]').forEach(el=>{const d=new Date(el.dataset.datetime);if(!isNaN(d))el.textContent=datetime.format(d)});

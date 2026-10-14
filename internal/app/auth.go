@@ -113,6 +113,7 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var u User
+	newOwner := false
 	err = tx.QueryRow(ctx, "SELECT id,phone,name,role FROM users WHERE phone=$1", phone).Scan(&u.ID, &u.Phone, &u.Name, &u.Role)
 	if err != nil {
 		if r.FormValue("terms") != "on" {
@@ -120,6 +121,7 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 			a.renderAuth(w, r, "otp", p)
 			return
 		}
+		newOwner = true
 		u = User{ID: token(), Phone: phone, Name: strings.TrimSpace(r.FormValue("name")), Role: "owner"}
 		if len(u.Name) > 200 {
 			a.fail(w, r, "نام خیلی طولانی است", 400)
@@ -163,9 +165,15 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		if u.Role == "admin" {
 			next = "/admin"
 		}
+		if u.Role == "content" {
+			next = "/content"
+		}
 		if u.Role == "provider" {
 			next = "/provider"
 		}
+	}
+	if newOwner {
+		next = "/profile?next=" + url.QueryEscape(next)
 	}
 	redirect(w, r, next)
 }

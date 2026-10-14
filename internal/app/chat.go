@@ -252,6 +252,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "گفتگوی ویزیت · "+v.PetName)
 	p.Chat = v
+	a.chatForms(r, &p)
 	a.render(w, r, "chat", p)
 }
 func (a *App) chatPoll(w http.ResponseWriter, r *http.Request) {
@@ -416,6 +417,7 @@ func (a *App) chatQuestionnairePage(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "فرم پایان ویزیت")
 	p.Chat = v
+	a.chatForms(r, &p)
 	a.render(w, r, "chat-questionnaire", p)
 }
 func (a *App) chatQuestionnaire(w http.ResponseWriter, r *http.Request) {
@@ -438,9 +440,24 @@ func (a *App) chatQuestionnaire(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "مدیریت نمی‌تواند فرم شرکت‌کنندگان را ثبت کند", 403)
 		return
 	}
+	scope := "customer-survey"
+	if role == "vet" {
+		scope = "vet-report"
+	}
+	f := a.form(ctx, scope, nil)
+	answers, validationErr := formAnswers(r, f)
+	if validationErr != nil {
+		tx.Rollback(ctx)
+		a.chatQuestionnaireError(w, r, validationErr.Error())
+		return
+	}
+	var previousResponse bool
+	if role != "vet" {
+		tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM consultation_customer_forms WHERE chat_id=$1)", c.ID).Scan(&previousResponse)
+	}
 	if role == "vet" {
 		symptoms, diagnosis, prescription, feedback := strings.TrimSpace(r.FormValue("symptoms")), strings.TrimSpace(r.FormValue("diagnosis")), strings.TrimSpace(r.FormValue("prescription")), strings.TrimSpace(r.FormValue("customer_feedback"))
-		rating, _ := strconv.Atoi(r.FormValue("customer_rating"))
+		rating, _ := strconv.Atoi(normalize(r.FormValue("customer_rating")))
 		if symptoms == "" || diagnosis == "" || prescription == "" || utf8.RuneCountInString(symptoms) > 6000 || utf8.RuneCountInString(diagnosis) > 6000 || utf8.RuneCountInString(prescription) > 6000 || utf8.RuneCountInString(feedback) > 3000 || (r.FormValue("customer_rating") != "" && r.FormValue("customer_rating") != "0" && (rating < 1 || rating > 5)) {
 			tx.Rollback(ctx)
 			a.chatQuestionnaireError(w, r, "علائم، تشخیص و تجویز لازم است؛ امتیاز مشتری اختیاری و بین ۱ تا ۵ باشد")
@@ -458,9 +475,9 @@ func (a *App) chatQuestionnaire(w http.ResponseWriter, r *http.Request) {
 			e = completeConsultation(ctx, tx, c)
 		}
 	} else {
-		rating, _ := strconv.Atoi(r.FormValue("rating"))
-		communication, _ := strconv.Atoi(r.FormValue("communication"))
-		clarity, _ := strconv.Atoi(r.FormValue("clarity"))
+		rating, _ := strconv.Atoi(normalize(r.FormValue("rating")))
+		communication, _ := strconv.Atoi(normalize(r.FormValue("communication")))
+		clarity, _ := strconv.Atoi(normalize(r.FormValue("clarity")))
 		body := strings.TrimSpace(r.FormValue("body"))
 		if body == "" {
 			body = strings.TrimSpace(r.FormValue("comment"))
@@ -471,6 +488,9 @@ func (a *App) chatQuestionnaire(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		_, e = tx.Exec(ctx, `INSERT INTO consultation_customer_forms(chat_id,rating,communication,clarity,body) VALUES($1,$2,$3,$4,$5) ON CONFLICT(chat_id) DO NOTHING`, c.ID, rating, communication, clarity, body)
+	}
+	if e == nil && !previousResponse {
+		e = saveFormResponse(ctx, tx, f, c.ID, sess(r).User.ID, answers)
 	}
 	if e == nil {
 		e = tx.Commit(ctx)
@@ -494,17 +514,18 @@ func (a *App) chatQuestionnaireErrorStatus(w http.ResponseWriter, r *http.Reques
 	}
 	if !v.QuestionnaireDone || v.Role == "vet" && v.State == "active" {
 		if v.Role == "vet" {
-			rating, _ := strconv.Atoi(r.FormValue("customer_rating"))
+			rating, _ := strconv.Atoi(normalize(r.FormValue("customer_rating")))
 			v.VetForm = &VetQuestionnaire{Symptoms: r.FormValue("symptoms"), Diagnosis: r.FormValue("diagnosis"), Prescription: r.FormValue("prescription"), CustomerFeedback: r.FormValue("customer_feedback"), CustomerRating: rating}
 		} else {
-			rating, _ := strconv.Atoi(r.FormValue("rating"))
-			communication, _ := strconv.Atoi(r.FormValue("communication"))
-			clarity, _ := strconv.Atoi(r.FormValue("clarity"))
+			rating, _ := strconv.Atoi(normalize(r.FormValue("rating")))
+			communication, _ := strconv.Atoi(normalize(r.FormValue("communication")))
+			clarity, _ := strconv.Atoi(normalize(r.FormValue("clarity")))
 			v.CustomerForm = &CustomerQuestionnaire{Rating: rating, Communication: communication, Clarity: clarity, Body: r.FormValue("body")}
 		}
 	}
 	p := a.page(r, "فرم پایان ویزیت")
 	p.Chat = v
+	a.chatForms(r, &p)
 	p.Error = msg
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(code)

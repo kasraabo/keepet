@@ -83,7 +83,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"money": money, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -202,7 +202,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media") && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -249,6 +249,23 @@ func (a *App) Handler() http.Handler {
 			w.Write(b)
 		})
 	}
+	m.HandleFunc("GET /management/questionnaires", a.formsAdmin)
+	m.HandleFunc("POST /management/questionnaires/{scope}", a.saveQuestions)
+	m.HandleFunc("GET /profile", a.ownerProfile)
+	m.HandleFunc("POST /profile", a.saveOwnerProfile)
+	m.HandleFunc("GET /specialists/{id}", a.specialistPage)
+	m.HandleFunc("GET /provider/profile", a.specialistEditor)
+	m.HandleFunc("POST /provider/profile", a.saveSpecialist)
+	m.HandleFunc("GET /provider-media/{id}", a.specialistMedia)
+	m.HandleFunc("POST /provider/media", a.uploadSpecialistMedia)
+	m.HandleFunc("POST /provider/media/{id}/delete", a.deleteSpecialistMedia)
+	m.HandleFunc("GET /management/support-content", a.supportAdmin)
+	m.HandleFunc("GET /management/reviews", a.reviewsAdmin)
+	m.HandleFunc("POST /management/reviews/{id}", a.publishReview)
+	m.HandleFunc("GET /content", a.contentAdmin)
+	m.HandleFunc("POST /content/{kind}/{id}", a.saveContent)
+	m.HandleFunc("GET /sitemap.xml", a.sitemap)
+	m.HandleFunc("GET /robots.txt", a.robots)
 	m.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		if a.DB.Ping(r.Context()) != nil {
 			http.Error(w, "database unavailable", 503)
@@ -261,6 +278,7 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /book/{service}", a.createBooking)
 	m.HandleFunc("GET /booking/{id}", a.bookingPage)
 	m.HandleFunc("POST /booking/{id}/step", a.bookingStep)
+	m.HandleFunc("POST /booking/{id}/pet", a.bookingPet)
 	m.HandleFunc("POST /booking/{id}/pay", a.pay)
 	m.HandleFunc("GET /login", a.loginPage)
 	m.HandleFunc("POST /auth/request", a.requestOTP)
@@ -341,6 +359,7 @@ func (a *App) page(r *http.Request, title string) Page {
 	policy := a.otpPolicy(r.Context())
 	p := Page{OTPResend: policy.Resend, IsManagement: strings.HasPrefix(r.URL.Path, "/management"), CodeDigits: policy.Digits, CodeTTL: policy.TTL, Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
 	a.livePage(r.Context(), &p)
+	a.applySEO(r, &p)
 	return p
 }
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page) {
@@ -355,7 +374,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page
 		return
 	}
 	component := templ.Raw(b.String())
-	if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(name, "management-") || name == "business" {
+	if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(name, "management-") || name == "business" || strings.HasPrefix(r.URL.Path, "/content") {
 		ui.ManagementDocument(p.Title, component).Render(r.Context(), w)
 		return
 	}
@@ -365,7 +384,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page
 		component.Render(r.Context(), w)
 		return
 	}
-	ui.Document(p.Title, component).Render(r.Context(), w)
+	ui.PublicDocument(p.Title, p.SEO.Title, p.SEO.Description, p.SEO.Canonical, component).Render(r.Context(), w)
 }
 func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	if r.Header.Get("HX-Request") == "true" {
@@ -422,7 +441,7 @@ func (a *App) landing(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "landing", p)
 }
 func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
-	rows, err := a.DB.Query(ctx, "SELECT id,COALESCE(user_id,''),name,service,bio,license,avatar,verified,active,species,areas,price,experience FROM providers WHERE active AND ($1='' OR service=$1) ORDER BY id", svc)
+	rows, err := a.DB.Query(ctx, "SELECT id,COALESCE(user_id,''),name,service,bio,license,avatar,verified,active,species,areas,price,experience,COALESCE((SELECT id FROM provider_media m WHERE m.provider_id=providers.id AND m.kind='portrait'),'') FROM providers WHERE active AND ($1='' OR service=$1) ORDER BY id", svc)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +449,7 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	var ps []Provider
 	for rows.Next() {
 		var p Provider
-		if err = rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Service, &p.Bio, &p.License, &p.Avatar, &p.Verified, &p.Active, &p.Species, &p.Areas, &p.Price, &p.Experience); err != nil {
+		if err = rows.Scan(&p.ID, &p.UserID, &p.Name, &p.Service, &p.Bio, &p.License, &p.Avatar, &p.Verified, &p.Active, &p.Species, &p.Areas, &p.Price, &p.Experience, &p.Portrait); err != nil {
 			return nil, err
 		}
 		ps = append(ps, p)

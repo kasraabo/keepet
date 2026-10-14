@@ -53,6 +53,28 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 	p := a.page(r, service(b.Service).Name)
 	p.Booking = &b
+	p.Form = a.form(r.Context(), b.Service, b.Answers)
+	p.PetForm = a.form(r.Context(), "pet", petValues(b))
+	if b.Answers["_pet_id"] != "" && sess(r).User != nil {
+		stored := a.savedForm(r.Context(), "pet", b.Answers["_pet_id"])
+		for k, v := range petValues(b) {
+			stored.Values[k] = v
+		}
+		p.PetForm.Values = stored.Values
+		missing := []Question{}
+		for _, q := range p.PetForm.Questions {
+			if !reusePetAnswer(q, stored) && !contains([]string{"pet_name", "species", "birth_year", "age", "weight"}, q.ID) {
+				missing = append(missing, q)
+			}
+		}
+		if b.Age == "" && b.Answers["birth_year"] == "" {
+			missing = append(missing, textQ("birth_year", "سال تولد شمسی", false), textQ("age", "سن تقریبی اگر سال تولد را نمی‌دانید", false))
+		}
+		p.PetForm.Questions = missing
+	}
+	if sess(r).User != nil {
+		p.Pets = a.pets(r.Context(), sess(r).User.ID)
+	}
 	p.Service = service(b.Service)
 	p.Error = msg
 	providers, _ := a.providers(r.Context(), b.Service)
@@ -87,7 +109,16 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	step, _ := strconv.Atoi(r.FormValue("step"))
-	bad := func(msg string) { a.render(w, r, "booking", a.bookingData(r, b, msg)) }
+	bad := func(msg string) {
+		if b.Answers == nil {
+			b.Answers = map[string]string{}
+		}
+		for _, q := range a.form(r.Context(), b.Service, nil).Questions {
+			b.Answers[q.ID] = r.FormValue(q.ID)
+		}
+		b.Answers["birth_year"] = r.FormValue("birth_year")
+		a.render(w, r, "booking", a.bookingData(r, b, msg))
+	}
 	if step != b.Stage {
 		redirect(w, r, "/booking/"+b.ID)
 		return
@@ -109,43 +140,28 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			bad("نام و نوع حیوان را درست وارد کنید.")
 			return
 		}
-		b.Answers = map[string]string{"symptom": r.FormValue("symptom"), "duration": r.FormValue("duration"), "appetite": r.FormValue("appetite"), "history": r.FormValue("history"), "behavior": r.FormValue("behavior")}
-		if b.Service == "vet" {
-			b.Answers = map[string]string{}
-			symptom := r.FormValue("symptom")
-			qs := a.questions(r.Context())
-			if len(qs) == 0 {
-				bad("پرسشنامه در دسترس نیست؛ دوباره تلاش کنید.")
-				return
-			}
-			for _, q := range qs {
-				if q.When != "" && !contains(strings.Split(q.When, ","), symptom) {
-					continue
-				}
-				v := strings.TrimSpace(r.FormValue(q.ID))
-				if q.Required && v == "" {
-					bad("پاسخ «" + q.Label + "» لازم است.")
-					return
-				}
-				if q.Type == "select" && v != "" {
-					valid := false
-					for _, o := range q.Options {
-						if o.Value == v {
-							valid = true
-						}
-					}
-					if !valid {
-						bad("پاسخ نامعتبر برای «" + q.Label + "»")
-						return
-					}
-				}
-				if len(v) > 8000 {
-					bad("شرح علائم بیش از حد طولانی است")
-					return
-				}
-				b.Answers[q.ID] = v
-			}
+		selectedPet := b.Answers["_pet_id"]
+		if e := a.stepPet(r, &b); e != nil {
+			bad(e.Error())
+			return
 		}
+		petAnswers, e := formAnswers(r, a.form(r.Context(), "pet", nil))
+		if e != nil {
+			bad(e.Error())
+			return
+		}
+		f := a.form(r.Context(), b.Service, nil)
+		answers, e := formAnswers(r, f)
+		if e != nil {
+			bad(e.Error())
+			return
+		}
+		b.Answers = answers
+		b.Answers["birth_year"] = petAnswers["birth_year"]
+		b.Answers["_pet_id"] = selectedPet
+		b.Answers["_questions"] = string(mustJSON(f.Questions))
+		b.Answers["_pet_questions"] = string(mustJSON(a.form(r.Context(), "pet", nil).Questions))
+		b.Answers["_pet_answers"] = string(mustJSON(petAnswers))
 		b.Consent = r.FormValue("consent") == "on"
 		b.Sample = r.FormValue("sample")
 		if b.Service == "vet" && (!b.Consent || b.Answers["symptom"] == "") {
@@ -162,8 +178,33 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			bad("محلهٔ تحت پوشش و آدرس کامل لازم است.")
 			return
 		}
-		answers, _ := json.Marshal(b.Answers)
-		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET pet_name=$2,species=$3,age=$4,weight=$5,answers=$6,consent=$7,sample=$8,area=$9,address=$10,stage=2,provider_id=NULL,availability_id=NULL WHERE id=$1 AND status='draft'", b.ID, b.PetName, b.Species, b.Age, b.Weight, answers, b.Consent, b.Sample, b.Area, b.Address)
+		answersRaw, _ := json.Marshal(b.Answers)
+		tx, e := a.DB.Begin(r.Context())
+		if e != nil {
+			bad("ذخیره نشد")
+			return
+		}
+		defer tx.Rollback(r.Context())
+		if sess(r).User != nil {
+			petID := selectedPet
+			if petID == "" {
+				petID = token()
+				_, err = tx.Exec(r.Context(), "INSERT INTO pets(id,user_id,name,species,age,weight,birth_year) VALUES($1,$2,$3,$4,$5,$6,$7)", petID, sess(r).User.ID, b.PetName, b.Species, b.Age, b.Weight, petAnswers["birth_year"])
+			} else {
+				_, err = tx.Exec(r.Context(), "UPDATE pets SET age=$2,birth_year=$3 WHERE id=$1 AND user_id=$4", petID, b.Age, petAnswers["birth_year"], sess(r).User.ID)
+			}
+			if err == nil {
+				err = saveFormResponse(r.Context(), tx, a.form(r.Context(), "pet", nil), petID, sess(r).User.ID, petAnswers)
+			}
+			b.Answers["_pet_id"] = petID
+			answersRaw, _ = json.Marshal(b.Answers)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), "UPDATE bookings SET pet_name=$2,species=$3,age=$4,weight=$5,answers=$6,consent=$7,sample=$8,area=$9,address=$10,stage=2,provider_id=NULL,availability_id=NULL WHERE id=$1 AND status='draft'", b.ID, b.PetName, b.Species, b.Age, b.Weight, answersRaw, b.Consent, b.Sample, b.Area, b.Address)
+		}
+		if err == nil {
+			err = tx.Commit(r.Context())
+		}
 	case 2:
 		if b.Service == "sampling" {
 			b.ProviderID = ""
@@ -344,15 +385,8 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "بارگذاری رزروها انجام نشد", 500)
 		return
 	}
-	rows, err := a.DB.Query(r.Context(), "SELECT id,name,species,age,weight FROM pets WHERE user_id=$1 ORDER BY name", p.User.ID)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var id, name, sp, age, weight string
-			rows.Scan(&id, &name, &sp, &age, &weight)
-			p.Pets = append(p.Pets, map[string]string{"id": id, "name": name, "species": sp, "age": age, "weight": weight})
-		}
-	}
+	p.Pets = a.pets(r.Context(), p.User.ID)
+	p.PetForm = a.form(r.Context(), "pet", map[string]string{})
 	p.Chats, err = a.chatSummaries(r, "")
 	if err != nil {
 		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
@@ -370,6 +404,7 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := a.page(r, "جزئیات رزرو")
+	p.Form = a.form(r.Context(), "service-review", nil)
 	p.Booking = &b
 	p.Providers, _ = a.providers(r.Context(), b.Service)
 	rows, err := a.DB.Query(r.Context(), "SELECT event,detail,created_at FROM booking_events WHERE booking_id=$1 ORDER BY id", b.ID)
@@ -456,12 +491,30 @@ func (a *App) review(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	b, err := a.getBooking(r)
-	rating, _ := strconv.Atoi(r.FormValue("rating"))
+	rating, _ := strconv.Atoi(normalize(r.FormValue("rating")))
 	if err != nil || b.OwnerID != sess(r).User.ID || !contains([]string{"completed", "result_ready"}, b.Status) || rating < 1 || rating > 5 {
 		a.fail(w, r, "امکان ثبت نظر وجود ندارد", 400)
 		return
 	}
-	_, err = a.DB.Exec(r.Context(), "INSERT INTO reviews(booking_id,user_id,rating,body) VALUES($1,$2,$3,$4) ON CONFLICT(booking_id) DO UPDATE SET rating=excluded.rating,body=excluded.body", b.ID, sess(r).User.ID, rating, r.FormValue("body"))
+	f := a.form(r.Context(), "service-review", nil)
+	answers, e := formAnswers(r, f)
+	if e != nil {
+		a.fail(w, r, e.Error(), 400)
+		return
+	}
+	tx, e := a.DB.Begin(r.Context())
+	if e != nil {
+		a.fail(w, r, "ثبت نشد", 500)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	_, err = tx.Exec(r.Context(), "INSERT INTO reviews(booking_id,user_id,rating,body) VALUES($1,$2,$3,$4) ON CONFLICT(booking_id) DO UPDATE SET rating=excluded.rating,body=excluded.body,published=false", b.ID, sess(r).User.ID, rating, r.FormValue("body"))
+	if err == nil {
+		err = saveFormResponse(r.Context(), tx, f, b.ID, sess(r).User.ID, answers)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil {
 		a.fail(w, r, "نظر ثبت نشد", 500)
 		return
@@ -472,13 +525,39 @@ func (a *App) addPet(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r) {
 		return
 	}
-	name := strings.TrimSpace(r.FormValue("name"))
+	name := strings.TrimSpace(r.FormValue("pet_name"))
+	if name == "" {
+		name = strings.TrimSpace(r.FormValue("name"))
+		r.Form.Set("pet_name", name)
+	}
 	sp := r.FormValue("species")
-	if name == "" || !contains([]string{"cat", "dog"}, sp) {
-		a.fail(w, r, "مشخصات پت را تکمیل کنید", 400)
+	age, year, e := petBirth(r.FormValue("age"), r.FormValue("birth_year"))
+	if e != nil {
+		a.fail(w, r, e.Error(), 400)
 		return
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO pets(id,user_id,name,species,age,weight) VALUES($1,$2,$3,$4,$5,$6)", token(), sess(r).User.ID, name, sp, r.FormValue("age"), r.FormValue("weight"))
+	r.Form.Set("age", age)
+	r.Form.Set("birth_year", year)
+	f := a.form(r.Context(), "pet", nil)
+	vs, e := formAnswers(r, f)
+	if e != nil || name == "" || !contains([]string{"cat", "dog"}, sp) {
+		a.fail(w, r, "مشخصات پت را کامل کنید", 400)
+		return
+	}
+	tx, e := a.DB.Begin(r.Context())
+	if e != nil {
+		a.fail(w, r, "ذخیره نشد", 500)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	id := token()
+	_, err := tx.Exec(r.Context(), "INSERT INTO pets(id,user_id,name,species,age,weight,birth_year) VALUES($1,$2,$3,$4,$5,$6,$7)", id, sess(r).User.ID, name, sp, age, r.FormValue("weight"), year)
+	if err == nil {
+		err = saveFormResponse(r.Context(), tx, f, id, sess(r).User.ID, vs)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil {
 		a.fail(w, r, "ذخیرهٔ پت انجام نشد", 500)
 		return

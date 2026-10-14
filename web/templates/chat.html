@@ -56,7 +56,7 @@
     </section>
   </div>
   {{if or $c.VetForm $c.CustomerForm}}<section class="chat-results"><h2>جمع‌بندی ویزیت</h2>{{template "chat-form-results" .}}</section>{{end}}
-</main>
+{{range .Forms}}<section class="panel spaced"><h2>{{.Name}}</h2>{{template "form-archive" .}}</section>{{end}}</main>
 {{end}}
 
 {{define "chat-admin-duration"}}
@@ -86,22 +86,17 @@
   {{template "notice" .}}
   <div class="chat-questionnaire-intro"><span class="chat-care-mark"><svg class="icon"><use href="#i-{{if eq $c.Role "vet"}}stethoscope{{else}}heart{{end}}"/></svg></span><div><div class="eyebrow">جمع‌بندی ویزیت آنلاین</div><h1>{{if eq $c.Role "vet"}}گزارش پزشکی ویزیت{{else}}تجربهٔ شما از مشاوره{{end}}</h1><p>{{if eq $c.Role "vet"}}اطلاعات درمانی در پروندهٔ {{$c.PetName}} برای مشتری، شما و مدیریت ثبت می‌شود.{{else}}نظر شما به بهتر شدن مراقبت از {{$c.PetName}} و سایر همراهان کوچک کمک می‌کند.{{end}}</p></div></div>
   {{if and $c.QuestionnaireDone (or (ne $c.Role "vet") (ne $c.State "active"))}}
-  <div class="alert alert-success">پرسشنامهٔ شما ثبت شده و در پرونده محفوظ است.</div>{{template "chat-form-results" .}}<div class="chat-questionnaire-actions"><a class="btn" href="{{$c.BackURL}}">بازگشت به پرونده</a><a class="btn btn-outline" href="/chats/{{$c.ID}}">مشاهدهٔ گفت‌وگو</a></div>
+  <div class="alert alert-success">پرسشنامهٔ شما ثبت شده و در پرونده محفوظ است.</div>{{template "form-archive" .Form}}{{template "chat-form-results" .}}<div class="chat-questionnaire-actions"><a class="btn" href="{{$c.BackURL}}">بازگشت به پرونده</a><a class="btn btn-outline" href="/chats/{{$c.ID}}">مشاهدهٔ گفت‌وگو</a></div>
   {{else if eq $c.Role "vet"}}
   <form class="panel chat-questionnaire-form" action="/chats/{{$c.ID}}/questionnaire" method="post">
     {{template "csrf" .}}
-    <div class="chat-form-section"><div class="chat-form-section-title"><span>۱</span><h2>شرح و جمع‌بندی پزشکی</h2></div><label for="chat-symptoms">علائم کلی <span class="chat-required">الزامی</span></label><textarea id="chat-symptoms" name="symptoms" rows="4" maxlength="6000" required placeholder="علائم مشاهده‌شده و شرح حال دریافت‌شده از صاحب حیوان">{{if $c.VetForm}}{{$c.VetForm.Symptoms}}{{end}}</textarea><label for="chat-diagnosis">تشخیص <span class="chat-required">الزامی</span></label><textarea id="chat-diagnosis" name="diagnosis" rows="3" maxlength="6000" required placeholder="تشخیص یا تشخیص‌های احتمالی و نیاز به معاینه یا بررسی تکمیلی">{{if $c.VetForm}}{{$c.VetForm.Diagnosis}}{{end}}</textarea><label for="chat-prescription">تجویز و توصیهٔ درمانی <span class="chat-required">الزامی</span></label><textarea id="chat-prescription" name="prescription" rows="4" maxlength="6000" required placeholder="اقدامات مراقبتی، توصیه‌های درمانی و پیگیری لازم">{{if $c.VetForm}}{{$c.VetForm.Prescription}}{{end}}</textarea><p class="chat-field-hint">این گزارش جایگزین معاینهٔ حضوری نیست. کیپت امکان خرید یا ارسال دارو ندارد.</p></div>
-    <div class="chat-form-section chat-optional-section"><div class="chat-form-section-title"><span>۲</span><h2>ارزیابی مشتری <small>اختیاری</small></h2></div><p class="chat-field-hint">این بخش فقط برای شما و مدیریت نمایش داده می‌شود.</p><label for="chat-customer-rating">کیفیت تعامل با مشتری</label><select id="chat-customer-rating" name="customer_rating"><option value="0">بدون امتیاز</option><option value="1" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 1}}selected{{end}}{{end}}>۱ · بسیار ضعیف</option><option value="2" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 2}}selected{{end}}{{end}}>۲ · ضعیف</option><option value="3" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 3}}selected{{end}}{{end}}>۳ · متوسط</option><option value="4" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 4}}selected{{end}}{{end}}>۴ · خوب</option><option value="5" {{if $c.VetForm}}{{if eq $c.VetForm.CustomerRating 5}}selected{{end}}{{end}}>۵ · عالی</option></select><label for="chat-customer-feedback">یادداشت دربارهٔ مشتری</label><textarea id="chat-customer-feedback" name="customer_feedback" rows="3" maxlength="3000" placeholder="بازخورد اختیاری دربارهٔ همکاری یا کیفیت ارتباط">{{if $c.VetForm}}{{$c.VetForm.CustomerFeedback}}{{end}}</textarea></div>
+    {{template "dynamic-fields" .Form}}<p>گزارش جایگزین معاینهٔ حضوری نیست؛ ارزیابی مشتری محرمانه است.</p>
     <div class="chat-questionnaire-actions"><button class="btn" type="submit">ثبت گزارش در پرونده</button><a href="/chats/{{$c.ID}}" class="text-link">بازگشت به گفت‌وگو</a></div>
   </form>
   {{else if eq $c.Role "owner"}}
   <form class="panel chat-questionnaire-form" action="/chats/{{$c.ID}}/questionnaire" method="post">
     {{template "csrf" .}}
-    <fieldset class="chat-rating-field"><legend>از تجربهٔ این مشاوره چقدر رضایت دارید؟</legend><div class="chat-rating-options">{{template "chat-rating-overall" .}}</div></fieldset>
-    <fieldset class="chat-rating-field"><legend>کیفیت ارتباط و توجه دامپزشک چطور بود؟</legend><div class="chat-rating-options">{{template "chat-rating-communication" .}}</div></fieldset>
-    <fieldset class="chat-rating-field"><legend>توضیحات و توصیه‌ها چقدر روشن و قابل فهم بودند؟</legend><div class="chat-rating-options">{{template "chat-rating-clarity" .}}</div></fieldset>
-    <label for="chat-owner-feedback">نکته یا پیشنهادی دارید؟ <span class="chat-field-optional">اختیاری</span></label><textarea id="chat-owner-feedback" name="body" rows="4" maxlength="3000" placeholder="چه چیزی خوب بود و چه چیزی می‌تواند بهتر شود؟">{{if $c.CustomerForm}}{{$c.CustomerForm.Body}}{{end}}</textarea>
-    <p class="chat-field-hint">امتیازها از ۱ (بسیار ضعیف) تا ۵ (عالی) هستند. بازخورد شما برای مدیریت قابل مشاهده است.</p>
+    {{template "dynamic-fields" .Form}}
     <div class="chat-questionnaire-actions"><button class="btn" type="submit">ثبت نظر و امتیاز</button><a href="/chats/{{$c.ID}}" class="text-link">بازگشت به گفت‌وگو</a></div>
   </form>
   {{else}}<div class="panel">این پرسشنامه توسط مشتری یا دامپزشک ویزیت تکمیل می‌شود.</div>{{end}}

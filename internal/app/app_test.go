@@ -425,12 +425,12 @@ func TestIntegration(t *testing.T) {
 		}
 	})
 	t.Run("ticket isolation and reply", func(t *testing.T) {
-		body, code := owner.post("/support", url.Values{"subject": {"سؤال آزمایشی"}, "body": {"می‌خواهم پیگیری کنم"}})
-		if code != 200 || !strings.Contains(body, "سؤال آزمایشی") {
+		body, code := owner.post("/support", url.Values{"email": {"test@example.com"}, "subject": {"پیگیری رزرو"}, "body": {"می‌خواهم پیگیری کنم"}})
+		if code != 200 || !strings.Contains(body, "پیگیری رزرو") {
 			t.Fatal("ticket missing")
 		}
 		var id string
-		a.DB.QueryRow(ctx, "SELECT id FROM tickets WHERE subject='سؤال آزمایشی'").Scan(&id)
+		a.DB.QueryRow(ctx, "SELECT id FROM tickets WHERE subject='پیگیری رزرو'").Scan(&id)
 		ops.post("/ops/tickets/"+id, url.Values{"reply": {"پاسخ عملیات"}})
 		body, _ = owner.get("/support")
 		if !strings.Contains(body, "پاسخ عملیات") {

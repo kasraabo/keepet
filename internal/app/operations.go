@@ -44,6 +44,9 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "گفتگوها بارگذاری نشد", 500)
 		return
 	}
+	for i := range p.Applications {
+		p.Applications[i].Form = a.savedForm(r.Context(), "signup-"+p.Applications[i].Service, p.Applications[i].ID)
+	}
 	a.render(w, r, "ops", p)
 }
 func validMeeting(s string) bool {
@@ -188,6 +191,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	err := a.DB.QueryRow(r.Context(), "SELECT id FROM providers WHERE user_id=$1 AND active", p.User.ID).Scan(&providerID)
 	if err == nil {
 		p.Next = providerID
+		p.Profile, _ = a.specialist(r.Context(), providerID)
 		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
 		if slotErr != nil {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
@@ -239,6 +243,9 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
 		return
+	}
+	for i := range p.Applications {
+		p.Applications[i].Form = a.savedForm(r.Context(), "signup-"+p.Applications[i].Service, p.Applications[i].ID)
 	}
 	a.render(w, r, "provider", p)
 }
@@ -345,7 +352,16 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/provider")
 }
 func (a *App) join(w http.ResponseWriter, r *http.Request) {
-	a.render(w, r, "join", a.page(r, "همکاری با کیپت"))
+	p := a.page(r, "همکاری با کیپت")
+	for _, s := range []string{"vet", "grooming", "sampling"} {
+		p.Forms = append(p.Forms, a.form(r.Context(), "signup-"+s, map[string]string{"name": func() string {
+			if p.User != nil {
+				return p.User.Name
+			}
+			return ""
+		}(), "price": "350000"}))
+	}
+	a.render(w, r, "join", p)
 }
 func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r) {
@@ -359,7 +375,26 @@ func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "اطلاعات، تعرفه و مدارک صلاحیت را کامل کنید", 400)
 		return
 	}
-	_, err = a.DB.Exec(r.Context(), "INSERT INTO applications(id,user_id,service,name,license,bio,area,price) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", token(), sess(r).User.ID, svc, name, r.FormValue("license"), bio, r.FormValue("area"), price)
+	f := a.form(r.Context(), "signup-"+svc, nil)
+	answers, e := formAnswers(r, f)
+	if e != nil {
+		a.fail(w, r, e.Error(), 400)
+		return
+	}
+	tx, e := a.DB.Begin(r.Context())
+	if e != nil {
+		a.fail(w, r, "ثبت نشد", 500)
+		return
+	}
+	defer tx.Rollback(r.Context())
+	id := token()
+	_, err = tx.Exec(r.Context(), "INSERT INTO applications(id,user_id,service,name,license,bio,area,price) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", id, sess(r).User.ID, svc, name, r.FormValue("license"), bio, r.FormValue("area"), price)
+	if err == nil {
+		err = saveFormResponse(r.Context(), tx, f, id, sess(r).User.ID, answers)
+	}
+	if err == nil {
+		err = tx.Commit(r.Context())
+	}
 	if err != nil {
 		a.fail(w, r, "درخواست ثبت نشد", 500)
 		return

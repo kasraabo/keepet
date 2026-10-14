@@ -20,6 +20,7 @@ const assert = (test, message) => { if (!test) throw Error(message); };
     await page.locator('[name=code]').fill((await page.locator('[data-dev-code]').innerText()).trim());
     if(await page.locator('[name=terms]').count()) await page.locator('[name=terms]').check();
     await page.locator('form[action="/auth/verify"] button').click();
+    if(!manager&&phone!=='09120000002'){await page.waitForURL('**/profile?next=*');await page.locator('[name=full_name]').fill('مشتری آزمایشی');await page.locator('form[action="/profile"] button').click()}
     await page.waitForURL(manager?'**/management':phone==='09120000002'?'**/provider':'**/dashboard');
     return {context,page};
   }
@@ -28,12 +29,12 @@ const assert = (test, message) => { if (!test) throw Error(message); };
   const day=sql("SELECT ((now() AT TIME ZONE 'Asia/Tehran')::date+1)::text");
   await vet.page.goto(base+'/provider');
   const availability=vet.page.locator('#provider-availability form[data-availability-form]');
-  await availability.locator('[name=day]').fill(day);
+  await availability.locator('[data-jalali]').click();for(let n=0;n<3&&await availability.locator('.calendar-grid button[data-date="'+day+'"]').count()===0;n++)await availability.getByRole('button',{name:'ماه بعد'}).click();await availability.locator('.calendar-grid button[data-date="'+day+'"]').click();
   await availability.locator('[name=period]').selectOption('custom');
   await availability.locator('[name=start_time]').fill('07:15');
   await availability.locator('[name=end_time]').fill('08:45');
   await availability.locator('[name=capacity]').fill('1');
-  await availability.locator('button').click();await vet.page.waitForURL('**/provider?notice=*');
+  await availability.getByRole('button',{name:'ثبت / به‌روزرسانی بازه'}).click();await vet.page.waitForURL('**/provider?notice=*');
   const slot=sql(`SELECT id FROM availability WHERE provider_id='vet-nazanin' AND day='${day}' AND start_time='07:15' AND end_time='08:45'`);
   assert(/^[a-f0-9]+$/.test(slot),'custom provider window was not saved');
   await vet.page.screenshot({path:'/tmp/keepet-custom-window-mobile.png',fullPage:true});
