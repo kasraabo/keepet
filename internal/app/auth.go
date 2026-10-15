@@ -182,4 +182,13 @@ func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: "keepet_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	redirect(w, r, "/")
 }
-func noticeURL(path, msg string) string { return path + "?notice=" + url.QueryEscape(msg) }
+func noticeURL(path, msg string) string {
+	u, err := url.Parse(path)
+	if err != nil {
+		return "/dashboard"
+	}
+	q := u.Query()
+	q.Set("notice", msg)
+	u.RawQuery = q.Encode()
+	return u.String()
+}

@@ -83,7 +83,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -202,7 +202,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media") && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/")) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -249,6 +249,21 @@ func (a *App) Handler() http.Handler {
 			w.Write(b)
 		})
 	}
+
+	m.HandleFunc("GET /wallet", a.walletPage)
+	m.HandleFunc("GET /wallet/export.csv", a.walletCSV)
+	m.HandleFunc("POST /wallet/bank", a.walletBankSave)
+	m.HandleFunc("POST /wallet/withdrawals", a.walletWithdraw)
+	m.HandleFunc("POST /wallet/withdrawals/{id}/cancel", a.walletCancel)
+	m.HandleFunc("POST /wallet/topup", a.walletDemoTopup)
+	m.HandleFunc("GET /wallet/receipts/{id}", a.walletReceipt)
+	m.HandleFunc("GET /management/wallet", a.walletAdmin)
+	m.HandleFunc("GET /management/wallet/export.csv", a.walletCSV)
+	m.HandleFunc("POST /management/wallet/banks/{id}", a.walletBankReview)
+	m.HandleFunc("POST /management/wallet/users/{id}/adjust", a.walletAdjust)
+	m.HandleFunc("POST /management/wallet/users/{id}/freeze", a.walletFreeze)
+	m.HandleFunc("POST /management/wallet/settings", a.walletSettingsSave)
+	m.HandleFunc("POST /management/wallet/withdrawals/{id}", a.walletWithdrawalAction)
 	m.HandleFunc("GET /management/questionnaires", a.formsAdmin)
 	m.HandleFunc("POST /management/questionnaires/{scope}", a.saveQuestions)
 	m.HandleFunc("GET /profile", a.ownerProfile)
@@ -457,11 +472,11 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	return ps, rows.Err()
 }
 
-const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes"
+const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used"
 
 func scanBooking(row pgx.Row) (Booking, error) {
 	var b Booking
-	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes)
+	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed)
 	return b, err
 }
 func (a *App) getBooking(r *http.Request) (Booking, error) {

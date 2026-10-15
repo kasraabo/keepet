@@ -84,3 +84,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 مدیریت فرم‌ها، انتخاب پت قبلی، تقویم شمسی، پروفایل و گالری متخصصان، FAQ و پنل مستقل محتوا/SEO: [راهنمای امکانات و به‌روزرسانی](docs/product-configuration.md).
 
 راهنمای کامل کار با سایت برای تمام نقش‌ها، همراه حساب‌های تست و لینک‌های کلیک‌پذیر: [دانلود PDF فارسی](docs/keepet-user-guide-fa.pdf) · [نسخهٔ HTML مستقل](docs/user-guide-fa.html). برای بازسازی فایل: `python3 scripts/build-user-guide.py` سپس `node scripts/build-user-guide.cjs` (نیازمند Chromium، Playwright و PyMuPDF).
+
+کیف پول کاربران و متخصصان، برداشت دستی با شبا و رسید، اعتبار هدیه و محل اتصال پاداش معرفی: [راهنمای کیف پول](docs/wallet.md). مسیرها: `/wallet` و `/management/wallet`. راهنمای PDF بالا مربوط به نسخهٔ پیش از کیف پول است؛ آموزش این قابلیت در سند کیف پول آمده است.

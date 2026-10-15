@@ -292,7 +292,7 @@ func TestBusiness(t *testing.T) {
 			t.Fatal("could not close unreserved slot")
 		}
 	})
-	t.Run("commission snapshot actual payment and payout idempotency", func(t *testing.T) {
+	t.Run("commission snapshot and wallet earnings replace direct payout", func(t *testing.T) {
 		save("service", "vet", url.Values{"commission": {"2000"}}, 200)
 		var session string
 		a.DB.QueryRow(ctx, "SELECT token FROM sessions WHERE user_id='demo-vet' ORDER BY expires_at DESC LIMIT 1").Scan(&session)
@@ -324,21 +324,30 @@ func TestBusiness(t *testing.T) {
 		if _, e = a.DB.Exec(ctx, "UPDATE bookings SET status='completed' WHERE id=$1", id); e != nil {
 			t.Fatal(e)
 		}
-		if h, c := admin.post("/admin/payout/"+id, url.Values{"reference": {"=CMD()"}}); c != 200 {
-			t.Fatalf("payout %d %s", c, h)
-		}
-		if _, c := admin.post("/admin/payout/"+id, url.Values{"reference": {"DEMO-02"}}); c != 409 {
-			t.Fatal("duplicate payout")
+		if _, c := admin.post("/admin/payout/"+id, url.Values{"reference": {"DEMO-01"}}); c != 409 {
+			t.Fatal("legacy payout must remain disabled")
 		}
 		var amount int64
-		a.DB.QueryRow(ctx, "SELECT amount FROM business_payouts WHERE booking_id=$1", id).Scan(&amount)
-		if amount != 280000 {
-			t.Fatalf("due %d", amount)
+		if e = a.DB.QueryRow(ctx, "SELECT cash_delta FROM wallet_entries WHERE idempotency_key=$1", "income:"+id).Scan(&amount); e != nil || amount != 280000 {
+			t.Fatalf("wallet share %d %v", amount, e)
 		}
-		h, c := admin.get("/admin/export.csv")
+		if _, e = a.DB.Exec(ctx, "UPDATE bookings SET notes='retry' WHERE id=$1", id); e != nil {
+			t.Fatal(e)
+		}
+		var count int
+		a.DB.QueryRow(ctx, "SELECT count(*) FROM wallet_entries WHERE idempotency_key=$1", "income:"+id).Scan(&count)
+		if count != 1 {
+			t.Fatal("duplicate service income")
+		}
+		// CSV still escapes spreadsheet formulas in descriptions.
+		if _, e = a.DB.Exec(ctx, "UPDATE users SET name='=CMD()' WHERE id='demo-vet'"); e != nil {
+			t.Fatal(e)
+		}
+		h, c := admin.get("/management/wallet/export.csv?user=demo-vet")
 		if c != 200 || !strings.Contains(h, "'=CMD()") {
 			t.Fatal("CSV formula unescaped")
 		}
+
 	})
 }
 func fmtInt(v int64) string { return strconv.FormatInt(v, 10) }

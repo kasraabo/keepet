@@ -579,43 +579,9 @@ func (a *App) businessPayout(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "admin") {
 		return
 	}
-	ctx := r.Context()
-	ref := strings.TrimSpace(r.FormValue("reference"))
-	if len(ref) < 3 || len(ref) > 120 {
-		a.fail(w, r, "شناسهٔ ثبت آزمایشی لازم است", 400)
-		return
-	}
-	tx, e := a.DB.Begin(ctx)
-	if e != nil {
-		a.fail(w, r, "ذخیره نشد", 500)
-		return
-	}
-	defer tx.Rollback(ctx)
-	var provider, st, refund string
-	var due int64
-	e = tx.QueryRow(ctx, "SELECT COALESCE(provider_id,''),status,refund_status,amount-amount*commission_bps/10000 FROM bookings WHERE id=$1 AND paid_at IS NOT NULL FOR UPDATE", r.PathValue("id")).Scan(&provider, &st, &refund, &due)
-	if e != nil || provider == "" || !contains([]string{"completed", "result_ready"}, st) || refund != "" {
-		a.fail(w, r, "فقط رزرو تکمیل‌شدهٔ بدون پروندهٔ بازگشت قابل تسویه است", 409)
-		return
-	}
-	tag, e := tx.Exec(ctx, "INSERT INTO business_payouts(booking_id,provider_id,amount,reference,actor_id) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING", r.PathValue("id"), provider, due, ref, sess(r).User.ID)
-	if e == nil && tag.RowsAffected() == 0 {
-		a.fail(w, r, "این رزرو قبلاً تسویه شده است", 409)
-		return
-	}
-	if e == nil {
-		raw, _ := json.Marshal(map[string]any{"provider": provider, "amount": due, "reference": ref, "mode": "simulation"})
-		_, e = tx.Exec(ctx, "INSERT INTO business_audit(actor_id,kind,target,after_data) VALUES($1,'payout',$2,$3)", sess(r).User.ID, r.PathValue("id"), raw)
-	}
-	if e == nil {
-		e = tx.Commit(ctx)
-	}
-	if e != nil {
-		a.fail(w, r, "تسویه ذخیره نشد", 500)
-		return
-	}
-	redirect(w, r, noticeURL("/management/finance", "ثبت تسویهٔ آزمایشی انجام شد؛ پولی منتقل نشده است."))
+	a.fail(w, r, "تسویهٔ مستقیم رزرو غیرفعال شده است؛ سهم خدمات در کیف پول ثبت می‌شود. از مدیریت کیف پول درخواست برداشت و رسید را پیگیری کنید.", 409)
 }
+
 func csvSafe(s string) string {
 	if strings.ContainsAny(strings.TrimLeft(s, " \t\r\n")[:min(1, len(strings.TrimLeft(s, " \t\r\n")))], "=+-@") {
 		return "'" + s

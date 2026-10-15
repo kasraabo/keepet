@@ -53,6 +53,12 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 	p := a.page(r, service(b.Service).Name)
 	p.Booking = &b
+	if p.User != nil {
+		p.Wallet = &WalletPage{}
+		if e := a.DB.QueryRow(r.Context(), "SELECT cash,bonus,frozen FROM wallets WHERE user_id=$1", p.User.ID).Scan(&p.Wallet.Account.Cash, &p.Wallet.Account.Bonus, &p.Wallet.Account.Frozen); e != nil {
+			p.Wallet = nil
+		}
+	}
 	p.Form = a.form(r.Context(), b.Service, b.Answers)
 	p.PetForm = a.form(r.Context(), "pet", petValues(b))
 	if b.Answers["_pet_id"] != "" && sess(r).User != nil {
@@ -359,6 +365,30 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 	price, priceErr := a.price(ctx, b)
 	if err != nil || slotErr != nil || !valid || used >= capacity || providerID != b.ProviderID || priceErr != nil || price != b.Amount {
 		a.fail(w, r, "ظرفیت یا قیمت تغییر کرده است؛ به مرحلهٔ انتخاب بازه برگردید.", 409)
+		return
+	}
+	var walletCash, walletBonus int64
+	if v := normalize(strings.TrimSpace(r.FormValue("wallet_amount"))); v != "" && v != "0" {
+		amount, e := walletAmount(v)
+		if e != nil || amount > b.Amount {
+			a.fail(w, r, "مبلغ کیف پول معتبر و حداکثر برابر مبلغ رزرو باشد", 400)
+			return
+		}
+		wallet, e := walletLock(ctx, tx, b.OwnerID)
+		if e != nil || wallet.Frozen || wallet.Cash+wallet.Bonus < amount {
+			a.fail(w, r, "کیف پول مسدود است یا موجودی کافی نیست", 409)
+			return
+		}
+		walletBonus = min(wallet.Bonus, amount)
+		walletCash = amount - walletBonus
+		if e = walletPost(ctx, tx, b.OwnerID, "booking_payment", -walletCash, -walletBonus, 0, "booking:"+b.ID, b.ID, b.OwnerID, "پرداخت رزرو از کیف پول؛ باقی مبلغ شبیه‌سازی می‌شود"); e != nil {
+			a.fail(w, r, "پرداخت کیف پول ثبت نشد", 409)
+			return
+		}
+	}
+	_, err = tx.Exec(ctx, "UPDATE bookings SET wallet_cash_used=$2,wallet_bonus_used=$3 WHERE id=$1", b.ID, walletCash, walletBonus)
+	if err != nil {
+		a.fail(w, r, "پرداخت ثبت نشد", 500)
 		return
 	}
 	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status='paid',paid_at=now(),commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID)

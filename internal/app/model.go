@@ -43,6 +43,7 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	WalletCashUsed, WalletBonusUsed                                                                                                                                                                                                             int64
 	ID, SessionToken, OwnerID, Service, PetName, Species, Age, Weight, Area, Address, ProviderID, AvailabilityID, Sample, Status, PaymentStatus, PaymentKey, MeetingURL, Prescription, Result, ReplacementID, RefundReason, RefundStatus, Notes string
 	Stage                                                                                                                                                                                                                                       int
 	Answers                                                                                                                                                                                                                                     map[string]string
@@ -102,6 +103,7 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Wallet  *WalletPage
 	Form    FormView
 	PetForm FormView
 	Forms   []FormView
@@ -154,7 +156,7 @@ func service(id string) Service {
 	return Service{}
 }
 func status(s string) string {
-	m := map[string]string{"draft": "پیش‌نویس", "paid": "در انتظار هماهنگی", "confirmed": "تأیید عملیات", "assigned": "تخصیص داده‌شده", "accepted": "پذیرفته‌شده", "in_progress": "در حال انجام", "collected": "نمونه گرفته شد", "delivered": "تحویل آزمایشگاه", "completed": "تکمیل‌شده", "result_ready": "نتیجه آماده", "replacement_pending": "در انتظار پذیرش جایگزین", "cancel_requested": "درخواست کنسلی", "cancelled": "لغوشده", "pending": "در انتظار بررسی", "approved": "تأییدشده", "rejected": "نیاز به اصلاح", "open": "در انتظار پاسخ", "closed": "پاسخ داده‌شده", "pending_refund": "در انتظار بازگشت", "refunded": "بازگشت آزمایشی ثبت شد"}
+	m := map[string]string{"draft": "پیش‌نویس", "paid": "در انتظار هماهنگی", "confirmed": "تأیید عملیات", "assigned": "تخصیص داده‌شده", "accepted": "پذیرفته‌شده", "in_progress": "در حال انجام", "collected": "نمونه گرفته شد", "delivered": "تحویل آزمایشگاه", "completed": "تکمیل‌شده", "result_ready": "نتیجه آماده", "replacement_pending": "در انتظار پذیرش جایگزین", "cancel_requested": "درخواست کنسلی", "cancelled": "لغوشده", "pending": "در انتظار بررسی", "approved": "تأییدشده", "rejected": "نیاز به اصلاح", "open": "در انتظار پاسخ", "closed": "پاسخ داده‌شده", "pending_refund": "در انتظار بازگشت", "refunded": "عودت به کیف پول ثبت شد"}
 	if v, ok := m[s]; ok {
 		return v
 	}
@@ -169,10 +171,15 @@ func normalize(s string) string {
 }
 func money(n int64) string {
 	s := fmt.Sprint(n)
+	sign := ""
+	if strings.HasPrefix(s, "-") {
+		sign = "-"
+		s = s[1:]
+	}
 	for i := len(s) - 3; i > 0; i -= 3 {
 		s = s[:i] + "," + s[i:]
 	}
-	return digits(s)
+	return sign + digits(s)
 }
 func areaName(id string) string {
 	for _, a := range Areas {

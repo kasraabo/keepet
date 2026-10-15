@@ -121,7 +121,7 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = tx.Exec(ctx, "UPDATE bookings SET status='cancelled',refund_status='refunded' WHERE id=$1", b.ID)
 		event = "cancelled"
-		detail = "بازگشت آزمایشی " + money(b.RefundAmount) + " تومان ثبت شد؛ جابه‌جایی واقعی وجه انجام نشده است."
+		detail = "عودت " + money(b.RefundAmount) + " تومان به کیف پول ثبت شد؛ بخش هدیه به اعتبار هدیه برگشت و انتقال بانکی انجام نشده است."
 	case "platform_cancel":
 		if contains([]string{"draft", "cancelled", "completed", "result_ready", "cancel_requested"}, b.Status) {
 			a.fail(w, r, "این رزرو قابل لغو از این مسیر نیست", 409)
