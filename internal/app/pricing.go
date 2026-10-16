@@ -9,10 +9,12 @@ import (
 )
 
 type PriceQuote struct {
-	Base, Markup, Fixed, Total, Hourly, Rounding int64
-	Minutes, BPS                                 int
-	Revision                                     int64
-	Items                                        []MenuItem
+	Base, Markup, Fixed, Total, Hourly int64
+	// Rounding is read only for archived quotes from the previous pricing version.
+	Rounding     int64
+	Minutes, BPS int
+	Revision     int64
+	Items        []MenuItem
 }
 type TariffItem struct {
 	ID, Name string
@@ -55,12 +57,6 @@ func (a *App) groomTariffs(ctx context.Context, id string) ([]TariffItem, error)
 	return out, rows.Err()
 }
 
-// Round the final booking once; never round individual items or the provider's income.
-func roundCustomerQuote(q *PriceQuote) {
-	const step int64 = 50000
-	q.Rounding = (step - q.Total%step) % step
-	q.Total += q.Rounding
-}
 func addPriceFees(q *PriceQuote, d BusinessData) error {
 	if q.Base <= 0 || q.Base > 10000000000 || d.Commission < 0 || d.Commission > 10000 || d.FixedFee < 0 || d.FixedFee > 1000000000 {
 		return fmt.Errorf("تعرفه معتبر نیست")
@@ -69,7 +65,6 @@ func addPriceFees(q *PriceQuote, d BusinessData) error {
 	q.Markup = (q.Base*int64(d.Commission) + 9999) / 10000
 	q.Fixed = d.FixedFee
 	q.Total = q.Base + q.Markup + q.Fixed
-	roundCustomerQuote(q)
 	return nil
 }
 func (a *App) quote(ctx context.Context, b Booking) (PriceQuote, error) {
@@ -94,7 +89,6 @@ func (a *App) quote(ctx context.Context, b Booking) (PriceQuote, error) {
 				q.Base = m.Price - m.Price*int64(d.Commission)/10000
 				q.Markup = m.Price - q.Base
 				q.Total = m.Price
-				roundCustomerQuote(&q)
 				return q, nil
 			}
 		}

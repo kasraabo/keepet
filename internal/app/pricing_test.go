@@ -79,7 +79,7 @@ func TestProviderPricing(t *testing.T) {
 	a.DB.QueryRow(ctx, "SELECT revision FROM business_config WHERE kind='service' AND id='vet'").Scan(&rev)
 	post(admin, "/management/service/vet", url.Values{"revision": {strconv.FormatInt(rev, 10)}, "name": {"ویزیت"}, "commission": {"۲۰۰۰"}, "fixed_fee": {"۵۰٬۰۰۰"}, "visit_minutes": {"۳۰"}, "enabled": {"on"}}, 200)
 	q, e := a.quote(ctx, Booking{Service: "vet", ProviderID: "vet-nazanin"})
-	if e != nil || q.Base != 600000 || q.Markup != 120000 || q.Fixed != 50000 || q.Total != 800000 || q.Rounding != 30000 {
+	if e != nil || q.Base != 600000 || q.Markup != 120000 || q.Fixed != 50000 || q.Total != 770000 || q.Rounding != 0 {
 		t.Fatalf("hourly quote %+v %v", q, e)
 	}
 	// A second specialist's rate is independent.
@@ -100,7 +100,7 @@ func TestProviderPricing(t *testing.T) {
 	post(groom, "/provider/pricing", values, 200)
 	a.DB.Exec(ctx, `UPDATE business_config SET data=data || '{"commission":1500,"fixed_fee":20000}'::jsonb WHERE kind='service' AND id='grooming'`)
 	g, e := a.quote(ctx, Booking{Service: "grooming", ProviderID: "groom-sara", Items: []string{"bath", "nails"}})
-	if e != nil || g.Base != 400000 || g.Total != 500000 || g.Rounding != 20000 || g.Fixed != 20000 {
+	if e != nil || g.Base != 400000 || g.Total != 480000 || g.Rounding != 0 || g.Fixed != 20000 {
 		t.Fatal(g, e)
 	}
 	for _, items := range [][]string{{"ears"}, {"bath", "bath"}, {"unknown"}} {
@@ -116,16 +116,16 @@ func TestProviderPricing(t *testing.T) {
 		t.Fatal(e)
 	}
 	directory, e := a.discover(httptest.NewRequest("GET", "/specialists?service=grooming&sort=price_asc", nil), nil)
-	if e != nil || len(directory.Cards) != 2 || directory.Cards[0].ID != "groom-sara" || directory.Cards[0].Cost != 250000 || directory.Cards[1].Cost != 1100000 {
+	if e != nil || len(directory.Cards) != 2 || directory.Cards[0].ID != "groom-sara" || directory.Cards[0].Cost != 250000 || directory.Cards[1].Cost != 1055000 {
 		t.Fatalf("individual customer price order %+v %v", directory, e)
 	}
-	// Sampling rounds only the customer total; it does not raise the specialist's base.
+	// Sampling preserves its exact menu price and historical commission model.
 	if _, e = a.DB.Exec(ctx, `UPDATE business_config SET data=data || '{"price":123456}'::jsonb WHERE kind='sampling' AND id='blood'; UPDATE business_config SET data=data || '{"commission":2000}'::jsonb WHERE kind='service' AND id='sampling'`); e != nil {
 		t.Fatal(e)
 	}
 	sample, e := a.quote(ctx, Booking{Service: "sampling", Sample: "blood"})
-	if e != nil || sample.Total != 150000 || sample.Base != 98765 || sample.Rounding != 26544 {
-		t.Fatalf("sampling rounding %+v %v", sample, e)
+	if e != nil || sample.Total != 123456 || sample.Base != 98765 || sample.Rounding != 0 {
+		t.Fatalf("sampling exact price %+v %v", sample, e)
 	}
 	// Income is the quoted base, even if fees or tariffs change after payment.
 	var uid, session string
@@ -165,7 +165,7 @@ func TestProviderPricing(t *testing.T) {
 	if _, err := a.DB.Exec(ctx, "UPDATE bookings SET provider_due=1 WHERE id=$1", id); err == nil {
 		t.Fatal("paid income was mutable")
 	}
-	// Rounded totals may remain equal even though the specialist's income changed.
+	// A tariff change must invalidate an unpaid quote.
 	post(vet, "/provider/pricing", url.Values{"revision": {"3"}, "hourly_rate": {"۲۰۱۰۰۰۰"}}, 200)
 	// An unpaid quote becomes stale when a specialist changes their tariff.
 	stale, sk := token(), token()
@@ -173,18 +173,21 @@ func TestProviderPricing(t *testing.T) {
 	before := stampTestQuote(t, a, stale)
 	post(vet, "/provider/pricing", url.Values{"revision": {"4"}, "hourly_rate": {"۲۰۱۰۰۰۱"}}, 200)
 	after, e := a.quote(ctx, Booking{Service: "vet", ProviderID: "vet-nazanin"})
-	if e != nil || before.Total != after.Total || before.Base == after.Base {
-		t.Fatal("rounding did not mask base change as expected", before, after, e)
+	if e != nil || before.Total == after.Total || before.Base == after.Base {
+		t.Fatal("tariff change did not change exact price", before, after, e)
 	}
 	post(owner, "/booking/"+stale+"/pay", url.Values{"payment_key": {sk}}, 409)
 }
 
-func TestCustomerRounding(t *testing.T) {
-	for _, v := range []struct{ raw, total, diff int64 }{{1, 50000, 49999}, {49999, 50000, 1}, {50000, 50000, 0}, {50001, 100000, 49999}, {770000, 800000, 30000}, {800000, 800000, 0}, {2147483648, 2147500000, 16352}} {
-		q := PriceQuote{Total: v.raw, Base: 123}
-		roundCustomerQuote(&q)
-		if q.Total != v.total || q.Rounding != v.diff || q.Base != 123 {
-			t.Fatalf("rounding %d: %+v", v.raw, q)
+func TestExactCustomerPrice(t *testing.T) {
+	for _, base := range []int64{1, 49999, 50000, 50001, 201234, 770000, 2147483648} {
+		q := PriceQuote{Base: base}
+		if err := addPriceFees(&q, BusinessData{Commission: 2000, FixedFee: 12345}); err != nil {
+			t.Fatal(err)
+		}
+		commission := (base*2000 + 9999) / 10000
+		if q.Base != base || q.Markup != commission || q.Total != base+commission+12345 || q.Rounding != 0 {
+			t.Fatalf("unexpected extra charge: %+v", q)
 		}
 	}
 }

@@ -186,9 +186,6 @@ func (a *App) livePage(ctx context.Context, p *Page) {
 					}
 				} else if s.ID == "sampling" {
 					a.DB.QueryRow(ctx, "SELECT COALESCE(min((data->>'price')::bigint),0) FROM business_config WHERE kind='sampling' AND (data->>'enabled')::boolean").Scan(&s.Price)
-					q := PriceQuote{Total: s.Price}
-					roundCustomerQuote(&q)
-					s.Price = q.Total
 				}
 				p.Services = append(p.Services, s)
 			}
