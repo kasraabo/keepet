@@ -329,6 +329,8 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /ops/availability", a.addAvailability)
 	m.HandleFunc("POST /ops/applications/{id}", a.applicationDecision)
 	m.HandleFunc("POST /ops/tickets/{id}", a.replyTicket)
+	m.HandleFunc("GET /management/coverage", a.coveragePage)
+	m.HandleFunc("POST /management/coverage/{id}", a.saveCoverage)
 	m.HandleFunc("GET /provider/pricing", a.providerPricing)
 	m.HandleFunc("POST /provider/pricing", a.saveProviderPricing)
 	m.HandleFunc("GET /provider", a.providerPanel)

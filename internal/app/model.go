@@ -80,7 +80,7 @@ func (s Slot) Remaining() int {
 
 type Area struct{ ID, Name, Path string }
 
-var Areas = []Area{{"saadat", "سعادت‌آباد", "20,15 100,15 105,65 50,85 20,60"}, {"shahrak", "شهرک غرب", "20,65 50,90 110,75 120,135 40,140 15,110"}, {"vanak", "ونک", "110,45 180,45 200,95 130,110 110,75"}, {"yousef", "یوسف‌آباد", "130,115 200,100 205,165 145,170 120,140"}, {"niavaran", "نیاوران", "185,15 275,15 285,70 205,85 180,40"}}
+var Areas = allAreas()
 
 type MenuItem struct {
 	ID, Name string
@@ -104,6 +104,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	MapAreas           []CoverageDistrict
+	LegacyCoverage     []BusinessRecord
 	Pricing            *PriceQuote
 	Tariff             *TariffPage
 	Discovery          *DiscoveryView

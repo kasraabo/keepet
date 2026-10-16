@@ -81,7 +81,7 @@ func (a *App) seedBusiness(ctx context.Context) error {
 		}
 	}
 	for _, v := range Areas {
-		if e := put("area", v.ID, BusinessData{Name: v.Name, Enabled: true}); e != nil {
+		if e := put("area", v.ID, BusinessData{Name: v.Name, Enabled: !isDistrictID(v.ID)}); e != nil {
 			return e
 		}
 	}
@@ -200,6 +200,17 @@ func (a *App) livePage(ctx context.Context, p *Page) {
 				p.Areas = append(p.Areas, v)
 			}
 		}
+	}
+	for _, boundary := range DistrictBoundaries {
+		view := CoverageDistrict{DistrictBoundary: boundary}
+		for _, record := range rs {
+			if record.ID == boundary.ID {
+				view.Enabled = record.Data.Enabled
+				view.Revision = record.Revision
+				break
+			}
+		}
+		p.MapAreas = append(p.MapAreas, view)
 	}
 	p.Menu = a.liveMenu(ctx, "grooming")
 	p.Samples = a.liveMenu(ctx, "sampling")
