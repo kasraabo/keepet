@@ -329,6 +329,8 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /ops/availability", a.addAvailability)
 	m.HandleFunc("POST /ops/applications/{id}", a.applicationDecision)
 	m.HandleFunc("POST /ops/tickets/{id}", a.replyTicket)
+	m.HandleFunc("GET /provider/pricing", a.providerPricing)
+	m.HandleFunc("POST /provider/pricing", a.saveProviderPricing)
 	m.HandleFunc("GET /provider", a.providerPanel)
 	m.HandleFunc("POST /provider/bookings/{id}", a.providerAction)
 	m.HandleFunc("POST /provider/availability", a.providerAvailability)
@@ -457,6 +459,13 @@ func (a *App) landing(w http.ResponseWriter, r *http.Request) {
 	}
 	p.Service = s
 	p.Providers, _ = a.providers(r.Context(), s.ID)
+	for i := range p.Providers {
+		if s.ID == "vet" {
+			if q, e := a.quote(r.Context(), Booking{Service: "vet", ProviderID: p.Providers[i].ID}); e == nil {
+				p.Providers[i].Price = q.Total
+			}
+		}
+	}
 	a.render(w, r, "landing", p)
 }
 func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
@@ -476,11 +485,11 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	return ps, rows.Err()
 }
 
-const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used"
+const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000)"
 
 func scanBooking(row pgx.Row) (Booking, error) {
 	var b Booking
-	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed)
+	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue)
 	return b, err
 }
 func (a *App) getBooking(r *http.Request) (Booking, error) {

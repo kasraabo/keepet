@@ -258,14 +258,6 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 			return v, nil
 		}
 	}
-	var basePrice int64
-	if svc == "grooming" {
-		for _, m := range a.liveMenu(r.Context(), "grooming") {
-			if basePrice == 0 || m.Price < basePrice {
-				basePrice = m.Price
-			}
-		}
-	}
 	ps, e := a.providers(r.Context(), svc)
 	if e != nil {
 		return nil, e
@@ -349,8 +341,32 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 			continue
 		}
 		card := DiscoveryProvider{Provider: p, Specialty: meta[p.ID], Tags: specialtyTags(meta[p.ID]), Cost: p.Price}
-		if svc == "grooming" {
-			card.Cost = basePrice
+		if svc == "vet" {
+			q, err := a.quote(r.Context(), Booking{Service: svc, ProviderID: p.ID})
+			if err != nil {
+				return nil, err
+			}
+			card.Cost = q.Total
+		} else {
+			menu, err := a.groomTariffs(r.Context(), p.ID)
+			if err != nil {
+				return nil, err
+			}
+			card.Cost = 0
+			for _, m := range menu {
+				if m.Enabled {
+					q, err := a.quote(r.Context(), Booking{Service: svc, ProviderID: p.ID, Items: []string{m.ID}})
+					if err != nil {
+						return nil, err
+					}
+					if card.Cost == 0 || q.Total < card.Cost {
+						card.Cost = q.Total
+					}
+				}
+			}
+			if card.Cost == 0 {
+				continue
+			}
 		}
 		for _, tag := range card.Tags {
 			specialties[searchText(tag)] = tag

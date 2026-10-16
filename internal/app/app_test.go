@@ -554,6 +554,7 @@ func TestIntegration(t *testing.T) {
 			cookieURL, _ := url.Parse(s.URL)
 			session = owner.client.Jar.Cookies(cookieURL)[0].Value
 			a.DB.Exec(ctx, "INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,provider_id,availability_id,amount,payment_key) VALUES($1,$2,$3,'vet',4,'race','vet-nazanin',$4,350000,$5)", id, session, ownerID, slot, key)
+			stampTestQuote(t, a, id)
 		}
 		var wg sync.WaitGroup
 		codes := make(chan int, 2)

@@ -283,6 +283,7 @@ func TestWallet(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
+		stampTestQuote(t, a, id)
 		if h, c := owner.get("/booking/" + id); c != 200 || !strings.Contains(h, "wallet_amount") {
 			t.Fatal("checkout wallet field missing")
 		}

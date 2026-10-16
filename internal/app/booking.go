@@ -53,6 +53,26 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 	p := a.page(r, service(b.Service).Name)
 	p.Booking = &b
+	if b.Service == "grooming" && b.ProviderID != "" {
+		p.Menu = a.customerGroomMenu(r.Context(), b.ProviderID)
+	}
+	if contains([]string{"vet", "grooming", "sampling"}, b.Service) {
+		var q PriceQuote
+		var raw []byte
+		if b.Stage == 4 || b.PaymentStatus == "paid" {
+			a.DB.QueryRow(r.Context(), "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&raw)
+		}
+		if len(raw) > 0 {
+			if json.Unmarshal(raw, &q) == nil {
+				p.Pricing = &q
+			}
+		} else if current, e := a.quote(r.Context(), b); e == nil {
+			p.Pricing = &current
+		}
+		if p.Pricing != nil && len(p.Pricing.Items) > 0 {
+			p.Menu = p.Pricing.Items
+		}
+	}
 	if p.User != nil {
 		p.Wallet = &WalletPage{}
 		if e := a.DB.QueryRow(r.Context(), "SELECT cash,bonus,frozen FROM wallets WHERE user_id=$1", p.User.ID).Scan(&p.Wallet.Account.Cash, &p.Wallet.Account.Bonus, &p.Wallet.Account.Frozen); e != nil {
@@ -287,7 +307,17 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		if b.Items == nil {
 			b.Items = []string{}
 		}
-		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET availability_id=$2,provider_id=$3,items=$4,amount=$5,stage=4 WHERE id=$1 AND status='draft'", b.ID, selected, b.ProviderID, b.Items, amount)
+		var snapshot []byte
+		{
+			q, e := a.quote(r.Context(), b)
+			if e != nil {
+				bad(e.Error())
+				return
+			}
+			amount = q.Total
+			snapshot = mustJSON(q)
+		}
+		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET availability_id=$2,provider_id=$3,items=$4,amount=$5,pricing_snapshot=$6,stage=4 WHERE id=$1 AND status='draft'", b.ID, selected, b.ProviderID, b.Items, amount, snapshot)
 	default:
 		bad("مرحلهٔ نامعتبر")
 		return
@@ -303,39 +333,9 @@ func (a *App) price(ctx context.Context, b Booking) (int64, error) {
 		return 0, fmt.Errorf("خدمت غیرفعال است")
 	}
 	switch b.Service {
-	case "vet":
-		var price int64
-		err := a.DB.QueryRow(ctx, "SELECT price FROM providers WHERE id=$1 AND active AND verified AND service='vet'", b.ProviderID).Scan(&price)
-		return price, err
-	case "grooming":
-		var total int64
-		seen := map[string]bool{}
-		for _, id := range b.Items {
-			if seen[id] {
-				return 0, fmt.Errorf("خدمت تکراری انتخاب شده")
-			}
-			seen[id] = true
-			found := false
-			for _, m := range a.liveMenu(ctx, "grooming") {
-				if id == m.ID {
-					total += m.Price
-					found = true
-				}
-			}
-			if !found {
-				return 0, fmt.Errorf("خدمت نامعتبر")
-			}
-		}
-		if total == 0 {
-			return 0, fmt.Errorf("حداقل یک خدمت گرومینگ انتخاب کنید")
-		}
-		return total, nil
-	case "sampling":
-		for _, s := range a.liveMenu(ctx, "sampling") {
-			if s.ID == b.Sample {
-				return s.Price, nil
-			}
-		}
+	case "vet", "grooming", "sampling":
+		q, e := a.quote(ctx, b)
+		return q.Total, e
 	}
 	return 0, fmt.Errorf("نوع خدمت نامعتبر")
 }
@@ -402,6 +402,19 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ظرفیت یا قیمت تغییر کرده است؛ به مرحلهٔ انتخاب بازه برگردید.", 409)
 		return
 	}
+	var newQuote *PriceQuote
+	{
+		q, e := a.quote(ctx, b)
+		var raw []byte
+		var previous PriceQuote
+		scanErr := tx.QueryRow(ctx, "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&raw)
+		// Reject stale decomposition even when totals coincide: provider income must match the displayed quote.
+		if e != nil || scanErr != nil || len(raw) == 0 || json.Unmarshal(raw, &previous) != nil || string(mustJSON(previous)) != string(mustJSON(q)) {
+			a.fail(w, r, "تعرفه تغییر کرده است؛ بازه و خدمات را دوباره بررسی کنید.", 409)
+			return
+		}
+		newQuote = &q
+	}
 	var walletCash, walletBonus int64
 	if v := normalizeNumber(r.FormValue("wallet_amount")); v != "" && v != "0" {
 		amount, e := walletAmount(v)
@@ -425,6 +438,13 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		a.fail(w, r, "پرداخت ثبت نشد", 500)
 		return
+	}
+	if newQuote != nil {
+		_, err = tx.Exec(ctx, "UPDATE bookings SET provider_due=$2,pricing_snapshot=$3 WHERE id=$1", b.ID, newQuote.Base, mustJSON(newQuote))
+		if err != nil {
+			a.fail(w, r, "ثبت سهم متخصص انجام نشد", 500)
+			return
+		}
 	}
 	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status='paid',paid_at=now(),commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID)
 	if err == nil {
@@ -471,6 +491,12 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "جزئیات رزرو")
 	p.Form = a.form(r.Context(), "service-review", nil)
 	p.Booking = &b
+	var rawQuote []byte
+	var savedQuote PriceQuote
+	if a.DB.QueryRow(r.Context(), "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&rawQuote) == nil && len(rawQuote) > 0 && json.Unmarshal(rawQuote, &savedQuote) == nil {
+		p.Pricing = &savedQuote
+		p.Service = service(b.Service)
+	}
 	p.Providers, _ = a.providers(r.Context(), b.Service)
 	rows, err := a.DB.Query(r.Context(), "SELECT event,detail,created_at FROM booking_events WHERE booking_id=$1 ORDER BY id", b.ID)
 	if err == nil {

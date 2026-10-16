@@ -43,6 +43,7 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	ProviderDue                                                                                                                                                                                                                                 int64
 	WalletCashUsed, WalletBonusUsed                                                                                                                                                                                                             int64
 	ID, SessionToken, OwnerID, Service, PetName, Species, Age, Weight, Area, Address, ProviderID, AvailabilityID, Sample, Status, PaymentStatus, PaymentKey, MeetingURL, Prescription, Result, ReplacementID, RefundReason, RefundStatus, Notes string
 	Stage                                                                                                                                                                                                                                       int
@@ -103,6 +104,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Pricing            *PriceQuote
+	Tariff             *TariffPage
 	Discovery          *DiscoveryView
 	DiscoverySettings  []DiscoveryRecord
 	DiscoveryProviders []DiscoveryProvider

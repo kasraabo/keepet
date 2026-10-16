@@ -88,7 +88,7 @@ func TestBusiness(t *testing.T) {
 	t.Run("live menu audit validation and stale form", func(t *testing.T) {
 		r := record("grooming", "bath")
 		save("grooming", "bath", url.Values{"price": {"۷۵۰۰۰۰"}}, 200)
-		price, e := a.price(ctx, Booking{Service: "grooming", Items: []string{"bath", "nails"}})
+		price, e := a.price(ctx, Booking{Service: "grooming", ProviderID: "groom-sara", Items: []string{"bath", "nails"}})
 		if e != nil || price != 900000 {
 			t.Fatalf("price %d %v", price, e)
 		}
@@ -105,7 +105,7 @@ func TestBusiness(t *testing.T) {
 			t.Fatal("invalid write persisted")
 		}
 		save("grooming", "bath", url.Values{"enabled": {"​"}}, 200)
-		if _, e = a.price(ctx, Booking{Service: "grooming", Items: []string{"bath"}}); e == nil {
+		if _, e = a.price(ctx, Booking{Service: "grooming", ProviderID: "groom-sara", Items: []string{"bath"}}); e == nil {
 			t.Fatal("disabled menu priced")
 		}
 	})
@@ -304,6 +304,7 @@ func TestBusiness(t *testing.T) {
 		if _, e = a.DB.Exec(ctx, "INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,provider_id,availability_id,amount,payment_key) VALUES($1,$2,'demo-vet','vet',4,'پت','vet-nazanin',$3,350000,$4)", id, session, slot, key); e != nil {
 			t.Fatal(e)
 		}
+		stampTestQuote(t, a, id)
 		if h, c := vet.post("/booking/"+id+"/pay", url.Values{"key": {key}, "payment_key": {key}, "result": {"success"}}); c != 200 {
 			t.Fatalf("pay %d %s", c, h)
 		}
@@ -328,7 +329,7 @@ func TestBusiness(t *testing.T) {
 			t.Fatal("legacy payout must remain disabled")
 		}
 		var amount int64
-		if e = a.DB.QueryRow(ctx, "SELECT cash_delta FROM wallet_entries WHERE idempotency_key=$1", "income:"+id).Scan(&amount); e != nil || amount != 280000 {
+		if e = a.DB.QueryRow(ctx, "SELECT cash_delta FROM wallet_entries WHERE idempotency_key=$1", "income:"+id).Scan(&amount); e != nil || amount != 350000 {
 			t.Fatalf("wallet share %d %v", amount, e)
 		}
 		if _, e = a.DB.Exec(ctx, "UPDATE bookings SET notes='retry' WHERE id=$1", id); e != nil {

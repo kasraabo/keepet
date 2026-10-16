@@ -64,7 +64,7 @@ func (a *App) loadReport(ctx context.Context, r *http.Request) (*ManagementRepor
 		return nil, e
 	}
 	v := &ManagementReport{From: start.Format("2006-01-02"), To: end.AddDate(0, 0, -1).Format("2006-01-02"), Start: start, End: end}
-	e = a.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status IN ('completed','result_ready')),count(*) FILTER(WHERE status IN ('cancel_requested','cancelled')),count(DISTINCT owner_id),COALESCE(sum(amount),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0),COALESCE(sum(amount*commission_bps/10000) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at>=$1 AND paid_at<$2`, start, end).Scan(&v.Paid, &v.Completed, &v.Cancelled, &v.Customers, &v.Gross, &v.Refund, &v.Fees)
+	e = a.DB.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status IN ('completed','result_ready')),count(*) FILTER(WHERE status IN ('cancel_requested','cancelled')),count(DISTINCT owner_id),COALESCE(sum(amount),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at>=$1 AND paid_at<$2`, start, end).Scan(&v.Paid, &v.Completed, &v.Cancelled, &v.Customers, &v.Gross, &v.Refund, &v.Fees)
 	if e != nil {
 		return nil, e
 	}
@@ -147,7 +147,7 @@ func (a *App) loadReport(ctx context.Context, r *http.Request) (*ManagementRepor
 			v.Trend[i].Width = int(v.Trend[i].Amount * 100 / maximum)
 		}
 	}
-	rows, e = a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(amount*commission_bps/10000) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at>=$1 AND paid_at<$2 GROUP BY service ORDER BY service`, start, end)
+	rows, e = a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at>=$1 AND paid_at<$2 GROUP BY service ORDER BY service`, start, end)
 	if e != nil {
 		return nil, e
 	}

@@ -15,6 +15,8 @@ import (
 )
 
 type BusinessData struct {
+	FixedFee        int64      `json:"fixed_fee,omitempty"`
+	VisitMinutes    int        `json:"visit_minutes,omitempty"`
 	DurationMinutes int        `json:"duration_minutes,omitempty"`
 	ReviewedBy      string     `json:"reviewed_by,omitempty"`
 	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
@@ -165,9 +167,28 @@ func (a *App) livePage(ctx context.Context, p *Page) {
 			if r.ID == s.ID && r.Data.Enabled {
 				s.Name = r.Data.Name
 				if s.ID == "vet" {
-					a.DB.QueryRow(ctx, "SELECT COALESCE(min(price),0) FROM providers WHERE service='vet' AND active AND verified").Scan(&s.Price)
+					a.DB.QueryRow(ctx, "SELECT COALESCE(min(COALESCE(hourly_rate,price*2)),0) FROM providers WHERE service='vet' AND active AND verified").Scan(&s.Price)
+					s.Price = (s.Price*int64(func() int {
+						if r.Data.VisitMinutes > 0 {
+							return r.Data.VisitMinutes
+						}
+						return 30
+					}()) + 59) / 60
+					q := PriceQuote{Base: s.Price}
+					if addPriceFees(&q, r.Data) == nil {
+						s.Price = q.Total
+					}
+				} else if s.ID == "grooming" {
+					a.DB.QueryRow(ctx, `SELECT COALESCE(min(COALESCE(t.price,(c.data->>'price')::bigint)),0) FROM providers p CROSS JOIN business_config c LEFT JOIN provider_tariffs t ON t.provider_id=p.id AND t.service_id=c.id WHERE p.service='grooming' AND p.active AND p.verified AND c.kind='grooming' AND (c.data->>'enabled')::boolean AND COALESCE(t.enabled,true)`).Scan(&s.Price)
+					q := PriceQuote{Base: s.Price}
+					if addPriceFees(&q, r.Data) == nil {
+						s.Price = q.Total
+					}
 				} else if s.ID == "sampling" {
 					a.DB.QueryRow(ctx, "SELECT COALESCE(min((data->>'price')::bigint),0) FROM business_config WHERE kind='sampling' AND (data->>'enabled')::boolean").Scan(&s.Price)
+					q := PriceQuote{Total: s.Price}
+					roundCustomerQuote(&q)
+					s.Price = q.Total
 				}
 				p.Services = append(p.Services, s)
 			}
@@ -246,7 +267,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM users WHERE role='owner'").Scan(&b.Owners)
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM providers WHERE active AND verified").Scan(&b.ActiveProviders)
-	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(amount*commission_bps/10000) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
+	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
 	if e != nil {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
@@ -266,7 +287,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
 	}
-	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,b.amount*b.commission_bps/10000,b.amount-b.amount*b.commission_bps/10000,x.booking_id IS NOT NULL,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
+	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(b.provider_due,b.amount-b.amount*b.commission_bps/10000),x.booking_id IS NOT NULL,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
 	if e != nil {
 		a.fail(w, r, "خواندن مالی ناموفق بود", 500)
 		return
@@ -524,6 +545,28 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 					a.fail(w, r, "کمیسیون باید بین صفر و ۱۰۰۰۰ واحد باشد؛ ۱۰۰ واحد = یک درصد", 400)
 					return
 				}
+				if contains([]string{"vet", "grooming"}, id) {
+					d.FixedFee, e = strconv.ParseInt(normalizeNumber(r.FormValue("fixed_fee")), 10, 64)
+					if r.FormValue("fixed_fee") == "" {
+						d.FixedFee = 0
+						e = nil
+					}
+					if e != nil || d.FixedFee < 0 || d.FixedFee > 1000000000 {
+						a.fail(w, r, "هزینهٔ ثابت نامعتبر است", 400)
+						return
+					}
+					if id == "vet" {
+						d.VisitMinutes, e = strconv.Atoi(normalize(r.FormValue("visit_minutes")))
+						if r.FormValue("visit_minutes") == "" {
+							d.VisitMinutes = 30
+							e = nil
+						}
+						if e != nil || d.VisitMinutes < 5 || d.VisitMinutes > 240 {
+							a.fail(w, r, "مدت ویزیت بین ۵ تا ۲۴۰ دقیقه باشد", 400)
+							return
+						}
+					}
+				}
 			case "grooming", "sampling":
 				d.Price, e = strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
 				if e != nil || d.Price < 1 || d.Price > 1000000000 {
@@ -595,7 +638,7 @@ func (a *App) businessExport(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "admin") {
 		return
 	}
-	rows, e := a.DB.Query(r.Context(), `SELECT b.id,b.service,b.status,b.amount,b.commission_bps,b.amount*b.commission_bps/10000,COALESCE(p.name,''),b.refund_amount,b.refund_status,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
+	rows, e := a.DB.Query(r.Context(), `SELECT b.id,b.service,b.status,b.amount,b.commission_bps,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(p.name,''),b.refund_amount,b.refund_status,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
 	if e != nil {
 		a.fail(w, r, "خروجی آماده نشد", 500)
 		return
