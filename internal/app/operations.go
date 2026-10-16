@@ -370,7 +370,7 @@ func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 	svc := r.FormValue("service")
 	name := strings.TrimSpace(r.FormValue("name"))
 	bio := strings.TrimSpace(r.FormValue("bio"))
-	price, err := strconv.ParseInt(normalize(r.FormValue("price")), 10, 64)
+	price, err := strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
 	if service(svc).ID == "" || name == "" || bio == "" || err != nil || price < 0 || (svc == "vet" && r.FormValue("license") == "") {
 		a.fail(w, r, "اطلاعات، تعرفه و مدارک صلاحیت را کامل کنید", 400)
 		return

@@ -447,7 +447,7 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "این اطلاعات تغییر کرده؛ صفحه را تازه کنید", 409)
 			return
 		}
-		price, e = strconv.ParseInt(normalize(r.FormValue("price")), 10, 64)
+		price, e = strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
 		areas = append([]string{}, r.Form["areas"]...)
 		if e != nil || price < 0 || price > 1000000000 || (svc == "vet" && price == 0) || r.FormValue("enabled") == "on" && !verified {
 			a.fail(w, r, "قیمت یا تأیید صلاحیت نامعتبر است", 400)
@@ -522,7 +522,7 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			case "grooming", "sampling":
-				d.Price, e = strconv.ParseInt(normalize(r.FormValue("price")), 10, 64)
+				d.Price, e = strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
 				if e != nil || d.Price < 1 || d.Price > 1000000000 {
 					a.fail(w, r, "قیمت مثبت و حداکثر یک میلیارد تومان لازم است", 400)
 					return

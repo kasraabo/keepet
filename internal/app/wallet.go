@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -46,16 +48,17 @@ type WalletSettings struct {
 	Enabled         bool
 }
 type WalletPage struct {
-	More                        bool
-	Account                     Wallet
-	Banks                       []WalletBank
-	Requests                    []Withdrawal
-	Accounts                    []Wallet
-	Entries                     []WalletEntry
-	Settings                    WalletSettings
-	Key, Filter, Query          string
-	Page, Count                 int
-	Cash, Bonus, Reserved, Paid int64
+	More                                        bool
+	WithdrawBlock, BankHolder, BankIBAN, Amount string
+	Account                                     Wallet
+	Banks                                       []WalletBank
+	Requests                                    []Withdrawal
+	Accounts                                    []Wallet
+	Entries                                     []WalletEntry
+	Settings                                    WalletSettings
+	Key, Filter, Query                          string
+	Page, Count                                 int
+	Cash, Bonus, Reserved, Paid                 int64
 }
 
 func walletStatus(s string) string {
@@ -66,7 +69,7 @@ func walletStatus(s string) string {
 	return s
 }
 func walletAmount(v string) (int64, error) {
-	n, e := strconv.ParseInt(normalize(strings.TrimSpace(v)), 10, 64)
+	n, e := strconv.ParseInt(normalizeNumber(v), 10, 64)
 	if e != nil || n < 1 || n > 1000000000 {
 		return 0, errors.New("مبلغ صحیح بین ۱ و ۱٬۰۰۰٬۰۰۰٬۰۰۰ تومان وارد کنید")
 	}
@@ -74,7 +77,34 @@ func walletAmount(v string) (int64, error) {
 }
 func bankName(s string) string {
 	s = strings.NewReplacer("ي", "ی", "ك", "ک", "\u200c", " ").Replace(s)
-	return strings.Join(strings.Fields(s), " ")
+	parts := strings.Fields(s)
+	if len(parts) > 1 && contains([]string{"دکتر", "دکتر.", "Dr", "Dr.", "dr", "dr."}, parts[0]) {
+		parts = parts[1:]
+	}
+	return strings.Join(parts, " ")
+}
+
+var groupedNumber = regexp.MustCompile(`^[+-]?[0-9]{1,3}(?:[٬,][0-9]{3})+(?:\.[0-9]+)?$`)
+
+func normalizeNumber(v string) string {
+	v = strings.ReplaceAll(normalize(v), "٫", ".")
+	if groupedNumber.MatchString(v) {
+		v = strings.NewReplacer("٬", "", ",", "").Replace(v)
+	}
+	return v
+}
+func normalizeIBAN(v string) string {
+	v = strings.ToUpper(normalize(v))
+	v = strings.Map(func(c rune) rune {
+		if unicode.IsSpace(c) || unicode.Is(unicode.Cf, c) || c == '-' || c == '–' || c == '—' {
+			return -1
+		}
+		return c
+	}, v)
+	if len(v) == 24 {
+		v = "IR" + v
+	}
+	return v
 }
 func validIBAN(s string) bool {
 	if len(s) != 26 || !strings.HasPrefix(s, "IR") {
@@ -124,11 +154,20 @@ func walletAudit(ctx context.Context, tx pgx.Tx, actor, kind, id string, data an
 	_, e = tx.Exec(ctx, "INSERT INTO business_audit(actor_id,kind,target,after_data) VALUES($1,$2,$3,$4)", actor, kind, id, raw)
 	return e
 }
-func (a *App) walletPage(w http.ResponseWriter, r *http.Request) {
+func (a *App) walletPage(w http.ResponseWriter, r *http.Request) { a.walletView(w, r, "", 200) }
+func (a *App) walletFailure(w http.ResponseWriter, r *http.Request, msg string, code int) {
+	if strings.HasPrefix(r.URL.Path, "/management/") {
+		a.fail(w, r, msg, code)
+		return
+	}
+	a.walletView(w, r, msg, code)
+}
+func (a *App) walletView(w http.ResponseWriter, r *http.Request, msg string, code int) {
 	if !a.auth(w, r) {
 		return
 	}
 	p := a.page(r, "کیف پول من")
+	p.Error = msg
 	v := &WalletPage{Key: token(), Page: 1, Filter: r.URL.Query().Get("kind")}
 	if n, e := strconv.Atoi(r.URL.Query().Get("page")); e == nil && n > 0 && n <= 10000 {
 		v.Page = n
@@ -169,6 +208,39 @@ func (a *App) walletPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.More = v.Page*100 < v.Count
+	v.BankHolder = p.User.Name
+	if bank := v.Account.Bank; bank != nil {
+		v.BankHolder = bank.Holder
+		v.BankIBAN = bank.IBAN
+	}
+	if r.URL.Path == "/wallet/bank" {
+		v.BankHolder = r.FormValue("holder")
+		v.BankIBAN = r.FormValue("iban")
+	}
+	if r.Method == "POST" {
+		v.Amount = r.FormValue("amount")
+	}
+	switch {
+	case v.Account.Frozen:
+		v.WithdrawBlock = "کیف پول مسدود است؛ از پشتیبانی پیگیری کنید."
+	case !v.Settings.Enabled:
+		v.WithdrawBlock = "مدیریت ثبت برداشت جدید را موقتاً متوقف کرده است."
+	case v.Account.Bank == nil:
+		v.WithdrawBlock = "ابتدا شبای خود را در همین صفحه ثبت کنید."
+	case v.Account.Bank.Status == "pending":
+		v.WithdrawBlock = "شبای شما در انتظار تأیید مدیر است؛ پس از تأیید، برداشت فعال می‌شود."
+	case v.Account.Bank.Status == "rejected":
+		v.WithdrawBlock = "شبای شما تأیید نشده؛ توضیح مدیر را بخوانید و اطلاعات بانکی را اصلاح کنید."
+	case bankName(v.Account.Bank.Holder) != bankName(p.User.Name):
+		v.WithdrawBlock = "نام پروفایل و صاحب شبا متفاوت است؛ نام پروفایل را اصلاح کنید."
+	case v.Account.Cash < v.Settings.Min:
+		v.WithdrawBlock = "موجودی نقدی از حداقل برداشت کمتر است. فقط درآمد خدمت تکمیل‌شده، شارژ نقدی و عودت نقدی قابل برداشت‌اند؛ هدیه قابل برداشت نیست."
+	}
+	if code != 200 {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		w.WriteHeader(code)
+	}
 	a.render(w, r, "wallet", p)
 }
 func (a *App) walletEntries(ctx context.Context, uid, kind string, offset, limit int) ([]WalletEntry, error) {
@@ -211,19 +283,36 @@ func (a *App) walletBankSave(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	u := sess(r).User
-	iban := strings.ToUpper(strings.ReplaceAll(normalize(r.FormValue("iban")), " ", ""))
+	iban := normalizeIBAN(r.FormValue("iban"))
 	holder := bankName(r.FormValue("holder"))
-	if !validIBAN(iban) || len(holder) < 3 || len(holder) > 200 || holder != bankName(u.Name) {
-		a.fail(w, r, "شبای معتبر ایرانی و نام کامل مطابق پروفایل لازم است؛ ابتدا نام خود را در پروفایل تکمیل کنید", 400)
+	if !validIBAN(iban) {
+		a.walletFailure(w, r, "شماره شبا معتبر نیست؛ ۲۴ رقم شبا را با یا بدون IR وارد کنید. شماره کارت یا حساب جای شبا پذیرفته نمی‌شود.", 400)
+		return
+	}
+	if len(holder) < 3 || len(holder) > 200 || holder != bankName(u.Name) {
+		a.walletFailure(w, r, "نام صاحب شبا باید با نام کامل پروفایل یکسان باشد؛ عنوان «دکتر» لازم نیست. از لینک تکمیل نام پروفایل استفاده کنید.", 400)
 		return
 	}
 	tx, e := a.DB.Begin(ctx)
 	if e != nil {
-		a.fail(w, r, "ثبت نشد", 500)
+		a.walletFailure(w, r, "ثبت نشد", 500)
 		return
 	}
 	defer tx.Rollback(ctx)
+	fail := func(msg string, code int) { _ = tx.Rollback(ctx); a.walletFailure(w, r, msg, code) }
 	_, e = walletLock(ctx, tx, u.ID)
+	if e == nil {
+		var oldIBAN, oldHolder string
+		err := tx.QueryRow(ctx, "SELECT iban,holder FROM wallet_bank_accounts WHERE user_id=$1 FOR UPDATE", u.ID).Scan(&oldIBAN, &oldHolder)
+		if err == nil && oldIBAN == iban && bankName(oldHolder) == holder {
+			redirect(w, r, noticeURL("/wallet#bank", "این شبا قبلاً ثبت شده است؛ وضعیت تأیید آن حفظ شد."))
+			return
+		}
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			fail("بررسی شبا انجام نشد؛ دوباره تلاش کنید", 500)
+			return
+		}
+	}
 	if e == nil {
 		_, e = tx.Exec(ctx, `INSERT INTO wallet_bank_accounts(id,user_id,iban,holder) VALUES($1,$2,$3,$4) ON CONFLICT(user_id) DO UPDATE SET iban=EXCLUDED.iban,holder=EXCLUDED.holder,status='pending',revision=wallet_bank_accounts.revision+1,reviewer_id=NULL,reviewed_at=NULL,review_note='',updated_at=now()`, token(), u.ID, iban, holder)
 	}
@@ -234,7 +323,7 @@ func (a *App) walletBankSave(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(ctx)
 	}
 	if e != nil {
-		a.fail(w, r, "شبا ذخیره نشد", 500)
+		fail("شبا ذخیره نشد", 500)
 		return
 	}
 	redirect(w, r, noticeURL("/wallet", "شبا برای بررسی دستی مدیر ثبت شد؛ تغییر شبا نیازمند تأیید دوباره است."))
@@ -246,20 +335,21 @@ func (a *App) walletWithdraw(w http.ResponseWriter, r *http.Request) {
 	amount, e := walletAmount(r.FormValue("amount"))
 	key := r.FormValue("request_key")
 	if e != nil || len(key) != 64 {
-		a.fail(w, r, "مبلغ یا شناسهٔ درخواست نامعتبر است", 400)
+		a.walletFailure(w, r, "مبلغ یا شناسهٔ درخواست نامعتبر است", 400)
 		return
 	}
 	ctx := r.Context()
 	uid := sess(r).User.ID
 	tx, e := a.DB.Begin(ctx)
 	if e != nil {
-		a.fail(w, r, "ثبت نشد", 500)
+		a.walletFailure(w, r, "ثبت نشد", 500)
 		return
 	}
 	defer tx.Rollback(ctx)
+	fail := func(msg string, code int) { _ = tx.Rollback(ctx); a.walletFailure(w, r, msg, code) }
 	v, e := walletLock(ctx, tx, uid)
 	if e != nil {
-		a.fail(w, r, "ثبت نشد", 500)
+		fail("ثبت نشد", 500)
 		return
 	}
 	var oldUID string
@@ -267,24 +357,36 @@ func (a *App) walletWithdraw(w http.ResponseWriter, r *http.Request) {
 	e = tx.QueryRow(ctx, "SELECT user_id,amount FROM wallet_withdrawals WHERE request_key=$1", key).Scan(&oldUID, &oldAmount)
 	if e == nil {
 		if oldUID != uid || oldAmount != amount {
-			a.fail(w, r, "شناسهٔ تکراری با مبلغ متفاوت", 409)
+			fail("شناسهٔ تکراری با مبلغ متفاوت", 409)
 			return
 		}
 		redirect(w, r, "/wallet")
 		return
 	}
 	if !errors.Is(e, pgx.ErrNoRows) {
-		a.fail(w, r, "ثبت نشد", 500)
+		fail("ثبت نشد", 500)
 		return
 	}
 	var s WalletSettings
 	e = tx.QueryRow(ctx, "SELECT min_withdrawal,max_withdrawal,daily_limit,withdrawals_enabled FROM wallet_settings WHERE id=1 FOR SHARE").Scan(&s.Min, &s.Max, &s.Daily, &s.Enabled)
 	if e != nil {
-		a.fail(w, r, "تنظیمات در دسترس نیست", 500)
+		fail("تنظیمات در دسترس نیست", 500)
 		return
 	}
-	if v.Frozen || !s.Enabled || amount < s.Min || amount > s.Max || amount > v.Cash {
-		a.fail(w, r, "برداشت غیرفعال است یا مبلغ خارج از حدود و موجودی قابل برداشت است", 409)
+	if v.Frozen {
+		fail("کیف پول مسدود است؛ با پشتیبانی تماس بگیرید.", 409)
+		return
+	}
+	if !s.Enabled {
+		fail("ثبت برداشت جدید موقتاً متوقف شده است.", 409)
+		return
+	}
+	if amount < s.Min || amount > s.Max {
+		fail("مبلغ باید بین "+money(s.Min)+" و "+money(s.Max)+" تومان باشد.", 409)
+		return
+	}
+	if amount > v.Cash {
+		fail("موجودی نقدی کافی نیست. مبلغ قابل برداشت شما "+money(v.Cash)+" تومان است؛ اعتبار هدیه قابل برداشت نیست.", 409)
 		return
 	}
 	var b WalletBank
@@ -294,17 +396,17 @@ func (a *App) walletWithdraw(w http.ResponseWriter, r *http.Request) {
 		e = tx.QueryRow(ctx, "SELECT name FROM users WHERE id=$1 FOR SHARE", uid).Scan(&legal)
 	}
 	if e != nil || b.Status != "verified" || bankName(legal) != bankName(b.Holder) {
-		a.fail(w, r, "شبای مطابق نام فعلی شما باید توسط مدیر تأیید شود", 409)
+		fail("شبای مطابق نام فعلی شما باید توسط مدیر تأیید شود", 409)
 		return
 	}
 	var used int64
 	e = tx.QueryRow(ctx, `SELECT COALESCE(sum(amount),0) FROM wallet_withdrawals WHERE user_id=$1 AND status IN ('pending','processing','paid') AND created_at>=date_trunc('day',now() AT TIME ZONE 'Asia/Tehran') AT TIME ZONE 'Asia/Tehran'`, uid).Scan(&used)
 	if e != nil {
-		a.fail(w, r, "سقف روزانه بررسی نشد", 500)
+		fail("سقف روزانه بررسی نشد", 500)
 		return
 	}
 	if used+amount > s.Daily {
-		a.fail(w, r, "سقف برداشت روزانه پر شده است", 409)
+		fail("سقف برداشت روزانه پر شده است", 409)
 		return
 	}
 	id := token()
@@ -316,7 +418,7 @@ func (a *App) walletWithdraw(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(ctx)
 	}
 	if e != nil {
-		a.fail(w, r, "درخواست ثبت نشد", 500)
+		fail("درخواست ثبت نشد", 500)
 		return
 	}
 	redirect(w, r, noticeURL("/wallet", "درخواست برداشت ثبت شد؛ وضعیت جاری و مبلغ رزروشده را در همین صفحه پیگیری کنید."))
@@ -331,20 +433,21 @@ func (a *App) walletRelease(w http.ResponseWriter, r *http.Request, staff bool) 
 	ctx := r.Context()
 	tx, e := a.DB.Begin(ctx)
 	if e != nil {
-		a.fail(w, r, "ثبت نشد", 500)
+		a.walletFailure(w, r, "ثبت نشد", 500)
 		return
 	}
 	defer tx.Rollback(ctx)
+	fail := func(msg string, code int) { _ = tx.Rollback(ctx); a.walletFailure(w, r, msg, code) }
 	var uid, st string
 	var amount int64
 	id := r.PathValue("id")
 	e = tx.QueryRow(ctx, "SELECT user_id,status,amount FROM wallet_withdrawals WHERE id=$1 FOR UPDATE", id).Scan(&uid, &st, &amount)
 	if e != nil || (!staff && uid != sess(r).User.ID) {
-		a.fail(w, r, "درخواست پیدا نشد", 404)
+		fail("درخواست پیدا نشد", 404)
 		return
 	}
 	if st != "pending" {
-		a.fail(w, r, "فقط درخواست در انتظار قابل لغو یا رد است؛ پرداخت در حال انجام را ابتدا با بانک تطبیق دهید", 409)
+		fail("فقط درخواست در انتظار قابل لغو یا رد است؛ پرداخت در حال انجام را ابتدا با بانک تطبیق دهید", 409)
 		return
 	}
 	reason := strings.TrimSpace(r.FormValue("reason"))
@@ -354,7 +457,7 @@ func (a *App) walletRelease(w http.ResponseWriter, r *http.Request, staff bool) 
 		next = "rejected"
 		back = "/management/wallet"
 		if len(reason) < 5 || len(reason) > 1000 {
-			a.fail(w, r, "دلیل رد را کامل کنید", 400)
+			fail("دلیل رد را کامل کنید", 400)
 			return
 		}
 	}
@@ -369,7 +472,7 @@ func (a *App) walletRelease(w http.ResponseWriter, r *http.Request, staff bool) 
 		e = tx.Commit(ctx)
 	}
 	if e != nil {
-		a.fail(w, r, "لغو ثبت نشد", 500)
+		fail("لغو ثبت نشد", 500)
 		return
 	}
 	redirect(w, r, noticeURL(back, "درخواست بسته و مبلغ به موجودی قابل برداشت برگشت."))
@@ -381,19 +484,20 @@ func (a *App) walletDemoTopup(w http.ResponseWriter, r *http.Request) {
 	n, e := walletAmount(r.FormValue("amount"))
 	key := r.FormValue("request_key")
 	if e != nil || len(key) != 64 {
-		a.fail(w, r, "مبلغ نامعتبر است", 400)
+		a.walletFailure(w, r, "مبلغ نامعتبر است", 400)
 		return
 	}
 	ctx := r.Context()
 	tx, e := a.DB.Begin(ctx)
 	if e != nil {
-		a.fail(w, r, "ثبت نشد", 500)
+		a.walletFailure(w, r, "ثبت نشد", 500)
 		return
 	}
 	defer tx.Rollback(ctx)
+	fail := func(msg string, code int) { _ = tx.Rollback(ctx); a.walletFailure(w, r, msg, code) }
 	v, e := walletLock(ctx, tx, sess(r).User.ID)
 	if e != nil || v.Frozen {
-		a.fail(w, r, "کیف پول در دسترس نیست", 409)
+		fail("کیف پول در دسترس نیست", 409)
 		return
 	}
 	// This application cannot run in production (New enforces APP_MODE). No bank adapter is called.
@@ -402,7 +506,7 @@ func (a *App) walletDemoTopup(w http.ResponseWriter, r *http.Request) {
 		e = tx.Commit(ctx)
 	}
 	if e != nil {
-		a.fail(w, r, "شارژ ثبت نشد؛ شناسهٔ تکراری با مبلغ متفاوت را بررسی کنید", 409)
+		fail("شارژ ثبت نشد؛ شناسهٔ تکراری با مبلغ متفاوت را بررسی کنید", 409)
 		return
 	}
 	redirect(w, r, noticeURL("/wallet", "شارژ آزمایشی ثبت شد؛ هیچ پولی از بانک دریافت نشده است."))

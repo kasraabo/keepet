@@ -239,7 +239,7 @@ func (a *App) walletSettingsSave(w http.ResponseWriter, r *http.Request) {
 	}
 	mi, e1 := walletAmount(r.FormValue("min"))
 	ma, e2 := walletAmount(r.FormValue("max"))
-	da, e3 := strconv.ParseInt(normalize(r.FormValue("daily")), 10, 64)
+	da, e3 := strconv.ParseInt(normalizeNumber(r.FormValue("daily")), 10, 64)
 	if e1 != nil || e2 != nil || e3 != nil || ma < mi || da < ma || da > 10000000000 {
 		a.fail(w, r, "حداقل، حداکثر و سقف روزانه معتبر وارد کنید", 400)
 		return

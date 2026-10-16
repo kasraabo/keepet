@@ -19,13 +19,22 @@ func TestWalletValidation(t *testing.T) {
 	if !validIBAN("IR062960000000100324200001") || validIBAN("IR072960000000100324200001") || validIBAN("IR00123") {
 		t.Fatal("Iran IBAN checksum")
 	}
-	for _, s := range []string{"-1", "1.5", "1000000001", "NaN", "1,000"} {
+	for _, s := range []string{"-1", "1.5", "1000000001", "NaN", "1,5"} {
 		if _, e := walletAmount(s); e == nil {
 			t.Fatalf("accepted %s", s)
 		}
 	}
 	if n, e := walletAmount("۱۲۳۴"); e != nil || n != 1234 {
 		t.Fatal("Persian amount")
+	}
+	if n, e := walletAmount("۱٬۲۳۴٬۵۶۷"); e != nil || n != 1234567 {
+		t.Fatal("grouped Persian amount")
+	}
+	if bankName("دکتر نازنین مهر") != bankName("نازنین مهر") {
+		t.Fatal("honorific mismatch")
+	}
+	if !validIBAN(normalizeIBAN("‎۰۶۲۹۶۰۰۰۰۰۰۰۱۰۰۳۲۴۲۰۰۰۰۱")) {
+		t.Fatal("24-digit Persian IBAN")
 	}
 	if bankName("علي  كاظمی") != bankName("علی کاظمی") {
 		t.Fatal("bank name normalization")
@@ -170,6 +179,15 @@ func TestWallet(t *testing.T) {
 		post(owner, "/wallet/withdrawals/"+withdrawal+"/cancel", nil, 409)
 		balance("wallet-owner", 1000000, 50000, 0)
 	})
+	t.Run("unchanged verified IBAN stays verified", func(t *testing.T) {
+		post(owner, "/wallet/bank", url.Values{"iban": {"۰۶۲۹۶۰۰۰۰۰۰۰۱۰۰۳۲۴۲۰۰۰۰۱"}, "holder": {"آزمایش مشتری"}}, 200)
+		var st string
+		var revision int64
+		a.DB.QueryRow(ctx, "SELECT status,revision FROM wallet_bank_accounts WHERE id=$1", bankID).Scan(&st, &revision)
+		if st != "verified" || revision != rev {
+			t.Fatalf("unchanged bank reset %s %d", st, revision)
+		}
+	})
 	t.Run("withdrawal idempotency and claim ownership", func(t *testing.T) {
 		v := url.Values{"amount": {"200000"}, "request_key": {token()}}
 		post(owner, "/wallet/withdrawals", v, 200)
@@ -216,7 +234,7 @@ func TestWallet(t *testing.T) {
 		}
 	})
 	t.Run("changed bank cancels old approval; freeze blocks spending", func(t *testing.T) {
-		post(owner, "/wallet/bank", url.Values{"iban": {iban}, "holder": {"آزمایش مشتری"}}, 200)
+		post(owner, "/wallet/bank", url.Values{"iban": {"IR762960000000100324200002"}, "holder": {"آزمایش مشتری"}}, 200)
 		post(owner, "/wallet/withdrawals", url.Values{"amount": {"100000"}, "request_key": {token()}}, 409)
 		post(admin, "/management/wallet/users/wallet-owner/freeze", url.Values{"frozen": {"on"}, "reason": {"بررسی امنیتی موقت"}}, 200)
 		post(owner, "/wallet/topup", url.Values{"amount": {"10000"}, "request_key": {token()}}, 409)

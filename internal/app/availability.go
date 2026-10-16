@@ -44,7 +44,7 @@ func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next 
 		a.fail(w, r, "تاریخ امروز تا ۹۰ روز آینده، بازه و ظرفیت صفر تا ۲۰ وارد کنید", 400)
 		return
 	}
-	start, end := r.FormValue("start_time"), r.FormValue("end_time")
+	start, end := normalize(r.FormValue("start_time")), normalize(r.FormValue("end_time"))
 	if prd != "custom" {
 		start = map[string]string{"morning": "09:00", "noon": "12:00", "afternoon": "15:00", "night": "18:00"}[prd]
 		end = map[string]string{"morning": "12:00", "noon": "15:00", "afternoon": "18:00", "night": "21:00"}[prd]
@@ -115,13 +115,13 @@ func (a *App) assignedWindow(ctx context.Context, tx pgx.Tx, b Booking, r *http.
 			return s, exact, "متخصص و بازهٔ انتخابی یکسان نیستند", 400
 		}
 		var e2 error
-		exact, e2 = time.ParseInLocation("2006-01-02T15:04", s.Day+"T"+r.FormValue("exact_clock"), a.Location)
+		exact, e2 = time.ParseInLocation("2006-01-02T15:04", s.Day+"T"+normalize(r.FormValue("exact_clock")), a.Location)
 		if e2 != nil {
 			return s, exact, "ساعت دقیق را به صورت ساعت و دقیقه وارد کنید", 400
 		}
 	} else {
 		var e error
-		exact, e = time.ParseInLocation("2006-01-02T15:04", r.FormValue("exact_time"), a.Location)
+		exact, e = time.ParseInLocation("2006-01-02T15:04", normalize(r.FormValue("exact_time")), a.Location)
 		if e != nil {
 			return s, exact, "زمان دقیق معتبر وارد کنید", 400
 		}

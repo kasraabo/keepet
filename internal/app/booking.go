@@ -368,7 +368,7 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var walletCash, walletBonus int64
-	if v := normalize(strings.TrimSpace(r.FormValue("wallet_amount"))); v != "" && v != "0" {
+	if v := normalizeNumber(r.FormValue("wallet_amount")); v != "" && v != "0" {
 		amount, e := walletAmount(v)
 		if e != nil || amount > b.Amount {
 			a.fail(w, r, "مبلغ کیف پول معتبر و حداکثر برابر مبلغ رزرو باشد", 400)

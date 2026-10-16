@@ -177,7 +177,7 @@ func money(n int64) string {
 		s = s[1:]
 	}
 	for i := len(s) - 3; i > 0; i -= 3 {
-		s = s[:i] + "," + s[i:]
+		s = s[:i] + "٬" + s[i:]
 	}
 	return sign + digits(s)
 }
