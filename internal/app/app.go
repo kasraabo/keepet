@@ -83,7 +83,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"referralPercent": referralPercent, "referralKind": referralKind, "optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -250,6 +250,10 @@ func (a *App) Handler() http.Handler {
 		})
 	}
 
+	m.HandleFunc("GET /referrals", a.referralsPage)
+	m.HandleFunc("GET /management/referrals", a.referralsPage)
+	m.HandleFunc("POST /management/referrals/settings", a.saveReferralSettings)
+	m.HandleFunc("POST /management/referrals/{kind}/{id}", a.toggleReferral)
 	m.HandleFunc("GET /wallet", a.walletPage)
 	m.HandleFunc("GET /wallet/export.csv", a.walletCSV)
 	m.HandleFunc("POST /wallet/bank", a.walletBankSave)

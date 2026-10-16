@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 var phoneRE = regexp.MustCompile(`^09[0-9]{9}$`)
@@ -24,17 +27,33 @@ func safeNext(s string) string {
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "ورود به کیپت")
 	p.Next = safeNext(r.URL.Query().Get("next"))
+	p.ReferralCode = normalizeReferralCode(r.URL.Query().Get("ref"))
+	if len(p.ReferralCode) > 40 {
+		p.ReferralCode = ""
+	}
 	a.renderAuth(w, r, "login", p)
 }
 func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "کد ورود")
 	p.Next = safeNext(r.FormValue("next"))
+	p.ReferralCode = normalizeReferralCode(r.FormValue("referral_code"))
 	policy := a.otpPolicy(r.Context())
 	phone := normalize(r.FormValue("phone"))
 	if !phoneRE.MatchString(phone) {
 		p.Error = "شمارهٔ موبایل را به صورت ۰۹۱۲۱۲۳۴۵۶۷ وارد کنید."
 		a.renderAuth(w, r, "login", p)
 		return
+	}
+	if p.ReferralCode != "" {
+		var valid bool
+		if referralCodeRE.MatchString(p.ReferralCode) {
+			a.DB.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM referral_codes WHERE code=$1 AND enabled)", p.ReferralCode).Scan(&valid)
+		}
+		if !valid {
+			p.Error = "کد معرف معتبر یا فعال نیست؛ آن را اصلاح یا خالی کنید."
+			a.renderAuth(w, r, "login", p)
+			return
+		}
 	}
 	ctx := r.Context()
 	tx, err := a.DB.Begin(ctx)
@@ -72,7 +91,7 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p.DevCode = fmt.Sprintf("%0*d", policy.Digits, n.Int64())
 	p.Challenge = token()
-	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at,max_attempts,code_digits) VALUES($1,$2,$3,$4,$5,$6,$7)", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(time.Duration(policy.TTL)*time.Second), policy.Attempts, policy.Digits)
+	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at,max_attempts,code_digits,referral_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(time.Duration(policy.TTL)*time.Second), policy.Attempts, policy.Digits, p.ReferralCode)
 	if err != nil {
 		a.fail(w, r, "ذخیرهٔ کد ورود انجام نشد", 500)
 		return
@@ -99,7 +118,7 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	var attempts, maxAttempts int
 	var expires time.Time
 	var consumed bool
-	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed,max_attempts,code_digits FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed, &maxAttempts, &p.CodeDigits)
+	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed,max_attempts,code_digits,referral_code FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed, &maxAttempts, &p.CodeDigits, &p.ReferralCode)
 	if err != nil || consumed || attempts >= maxAttempts || time.Now().After(expires) {
 		p.Error = "کد منقضی یا مصرف شده است. کد تازه درخواست کنید."
 		a.renderAuth(w, r, "login", p)
@@ -127,12 +146,25 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "نام خیلی طولانی است", 400)
 			return
 		}
-		_, err = tx.Exec(ctx, "INSERT INTO users(id,phone,name,role) VALUES($1,$2,$3,'owner') ON CONFLICT(phone) DO UPDATE SET phone=excluded.phone RETURNING id", u.ID, u.Phone, u.Name)
+		err = tx.QueryRow(ctx, "INSERT INTO users(id,phone,name,role) VALUES($1,$2,$3,'owner') ON CONFLICT(phone) DO NOTHING RETURNING id", u.ID, u.Phone, u.Name).Scan(&u.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			newOwner = false
+			err = tx.QueryRow(ctx, "SELECT id,phone,name,role FROM users WHERE phone=$1", phone).Scan(&u.ID, &u.Phone, &u.Name, &u.Role)
+		}
 		if err != nil {
 			a.fail(w, r, "ساخت حساب انجام نشد", 500)
 			return
 		}
 		tx.QueryRow(ctx, "SELECT id,role FROM users WHERE phone=$1", phone).Scan(&u.ID, &u.Role)
+	}
+	if newOwner && p.ReferralCode != "" {
+		_, err = tx.Exec(ctx, "SELECT referral_register($1,$2)", u.ID, p.ReferralCode)
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			p.Error = "کد معرف دیگر فعال نیست یا پاداش قابل ثبت نیست؛ کد را بررسی کنید و دوباره وارد شوید."
+			a.renderAuth(w, r, "login", p)
+			return
+		}
 	}
 	if strings.HasPrefix(p.Next, "/management") && u.Role != "admin" {
 		a.fail(w, r, "این حساب دسترسی مدیریت پلتفرم ندارد", 403)

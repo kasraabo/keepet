@@ -48,6 +48,7 @@ type WalletSettings struct {
 	Enabled         bool
 }
 type WalletPage struct {
+	ReferralDebt                                int64
 	More                                        bool
 	WithdrawBlock, BankHolder, BankIBAN, Amount string
 	Account                                     Wallet
@@ -62,7 +63,7 @@ type WalletPage struct {
 }
 
 func walletStatus(s string) string {
-	m := map[string]string{"pending": "در انتظار بررسی", "processing": "در حال پرداخت بانکی", "paid": "رسید پرداخت ثبت‌شده", "rejected": "ردشده", "cancelled": "لغوشده", "verified": "تأییدشده", "service_income": "درآمد خدمت", "refund": "عودت وجه", "booking_payment": "پرداخت رزرو", "withdrawal_hold": "رزرو مبلغ برداشت", "withdrawal_paid": "برداشت پرداخت‌شده", "withdrawal_release": "آزادسازی برداشت", "admin_cash": "اصلاح موجودی نقدی", "admin_bonus": "اعتبار هدیه", "topup_demo": "شارژ آزمایشی", "referral_reward": "پاداش معرفی"}
+	m := map[string]string{"pending": "در انتظار بررسی", "processing": "در حال پرداخت بانکی", "paid": "رسید پرداخت ثبت‌شده", "rejected": "ردشده", "cancelled": "لغوشده", "verified": "تأییدشده", "service_income": "درآمد خدمت", "refund": "عودت وجه", "booking_payment": "پرداخت رزرو", "withdrawal_hold": "رزرو مبلغ برداشت", "withdrawal_paid": "برداشت پرداخت‌شده", "withdrawal_release": "آزادسازی برداشت", "admin_cash": "اصلاح موجودی نقدی", "admin_bonus": "اعتبار هدیه", "topup_demo": "شارژ آزمایشی", "referral_reward": "پاداش معرفی", "referral_signup": "هدیهٔ عضویت فرد معرفی‌شده", "referral_welcome": "اعتبار خوش‌آمدگویی", "referral_income": "درآمد معرفی متخصص", "referral_recovery": "وصول بدهی اصلاح پاداش"}
 	if v, ok := m[s]; ok {
 		return v
 	}
@@ -220,7 +221,13 @@ func (a *App) walletView(w http.ResponseWriter, r *http.Request, msg string, cod
 	if r.Method == "POST" {
 		v.Amount = r.FormValue("amount")
 	}
+	if e = a.DB.QueryRow(ctx, "SELECT COALESCE((SELECT debt FROM referral_accounts WHERE user_id=$1),0)", uid).Scan(&v.ReferralDebt); e != nil {
+		a.fail(w, r, "وضعیت اصلاح پاداش بارگذاری نشد", 500)
+		return
+	}
 	switch {
+	case v.ReferralDebt > 0:
+		v.WithdrawBlock = "ابتدا بدهی اصلاح پاداش معرفی باید از موجودی نقدی تسویه شود."
 	case v.Account.Frozen:
 		v.WithdrawBlock = "کیف پول مسدود است؛ از پشتیبانی پیگیری کنید."
 	case !v.Settings.Enabled:
@@ -365,6 +372,15 @@ func (a *App) walletWithdraw(w http.ResponseWriter, r *http.Request) {
 	}
 	if !errors.Is(e, pgx.ErrNoRows) {
 		fail("ثبت نشد", 500)
+		return
+	}
+	var referralDebt int64
+	if e = tx.QueryRow(ctx, "SELECT COALESCE((SELECT debt FROM referral_accounts WHERE user_id=$1),0)", uid).Scan(&referralDebt); e != nil {
+		fail("بررسی وضعیت معرفی انجام نشد", 500)
+		return
+	}
+	if referralDebt > 0 {
+		fail("ابتدا بدهی اصلاح پاداش معرفی باید تسویه شود؛ لغو برداشت قبلی، مبلغ آن را برای تسویه آزاد می‌کند.", 409)
 		return
 	}
 	var s WalletSettings

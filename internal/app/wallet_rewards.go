@@ -6,8 +6,9 @@ import (
 	"strings"
 )
 
-// GrantReferralReward is a server-only integration point for a future verified
-// referral event. Never call this from a user-supplied referral code alone.
+// GrantReferralReward is retained for verified external promotional events.
+// The built-in referral program uses the transactional referral SQL functions.
+// Never call this from a user-supplied referral code alone.
 // The event ID must identify one reward recipient and remain stable on retries.
 // Rewards are promotional credit, so a refund cannot turn them into cash.
 func (a *App) GrantReferralReward(ctx context.Context, userID, eventID string, amount int64) error {

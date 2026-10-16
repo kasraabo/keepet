@@ -17,7 +17,8 @@ type ReportTrend struct {
 	Width  int
 }
 type ManagementReport struct {
-	SLAEligible int
+	ReferralCost int64
+	SLAEligible  int
 
 	From, To                                                                          string
 	Start, End                                                                        time.Time
@@ -106,6 +107,9 @@ func (a *App) loadReport(ctx context.Context, r *http.Request) (*ManagementRepor
 	if v.PreviousGross > 0 {
 		growth = digits(fmt.Sprintf("%+.1f%%", float64(v.Gross-v.PreviousGross)*100/float64(v.PreviousGross)))
 	}
+	if e = a.DB.QueryRow(ctx, `SELECT COALESCE(sum(a.credited-a.adjusted),0) FROM referral_order_awards a JOIN bookings b ON b.id=a.booking_id WHERE b.paid_at>=$1 AND b.paid_at<$2`, start, end).Scan(&v.ReferralCost); e != nil {
+		return nil, e
+	}
 	v.Cards = []KPICard{
 		{"ارزش پرداخت‌ها (GMV)", money(v.Gross), "تومان · کل پرداخت‌های ثبت‌شده در بازه"},
 		{"دریافتی پس از بازگشت وجه", money(v.Gross - v.Refund), "تومان · درآمد خالص کسب‌وکار نیست"},
@@ -120,6 +124,7 @@ func (a *App) loadReport(ctx context.Context, r *http.Request) (*ManagementRepor
 		{"مشتریان با خرید تکراری", rate(v.Repeat, v.Customers), "دو یا چند پرداخت در همین دوره"},
 		{"ثبت اقدام عملیات تا ۳۰ دقیقه", rate(v.OnTime, v.SLAEligible), "فقط درخواست‌های پاسخ‌داده‌شده یا با عمر ≥۳۰ دقیقه؛ تماس واقعی نیست"},
 	}
+	v.Cards = append(v.Cards, KPICard{"هزینهٔ سهم معرفی متخصصان", money(v.ReferralCost), "تومان · درآمد معرفی پس از اصلاح عودت"}, KPICard{"سهم کیپت پس از سهم معرفی", money(v.Fees - v.ReferralCost), "تومان · پیش از هزینه‌های واقعی کسب‌وکار"})
 	rows, e := a.DB.Query(ctx, `SELECT s.day::date::text,count(b.id),COALESCE(sum(b.amount),0) FROM generate_series($1::date,$2::date-1,interval '1 day') s(day) LEFT JOIN bookings b ON (b.paid_at AT TIME ZONE 'Asia/Tehran')::date=s.day::date GROUP BY s.day ORDER BY s.day`, v.From, end.Format("2006-01-02"))
 	if e != nil {
 		return nil, e

@@ -345,6 +345,12 @@ func (a *App) walletWithdrawalAction(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "کیف پول مسدود یا در دسترس نیست", 409)
 			return
 		}
+		var debt int64
+		if er = tx.QueryRow(ctx, "SELECT COALESCE((SELECT debt FROM referral_accounts WHERE user_id=$1),0)", uid).Scan(&debt); er != nil || debt > 0 {
+			_ = tx.Rollback(ctx)
+			a.fail(w, r, "بدهی اصلاح معرفی باید پیش از آغاز پرداخت تسویه شود؛ درخواست را رد کنید تا وجه رزروشده آزاد شود.", 409)
+			return
+		}
 		var bankStatus, holder, name string
 		var current int64
 		e = tx.QueryRow(ctx, "SELECT status,revision,holder FROM wallet_bank_accounts WHERE id=$1 FOR SHARE", bankID).Scan(&bankStatus, &current, &holder)

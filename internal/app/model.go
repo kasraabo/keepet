@@ -104,6 +104,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Referrals          *ReferralPage
+	ReferralCode       string
 	MapAreas           []CoverageDistrict
 	LegacyCoverage     []BusinessRecord
 	Pricing            *PriceQuote
