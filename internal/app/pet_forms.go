@@ -53,7 +53,7 @@ func (a *App) bookingPet(w http.ResponseWriter, r *http.Request) {
 	}
 	answers["_pet_id"] = id
 	answers["birth_year"] = vs["birth_year"]
-	_, e = a.DB.Exec(r.Context(), "UPDATE bookings SET pet_name=$2,species=$3,age=$4,weight=$5,answers=$6 WHERE id=$1 AND status='draft'", b.ID, vs["pet_name"], func() string {
+	tag, e := a.DB.Exec(r.Context(), "UPDATE bookings SET pet_name=$2,species=$3,age=$4,weight=$5,answers=$6 WHERE id=$1 AND status='draft' AND stage=1", b.ID, vs["pet_name"], func() string {
 		if vs["species"] == "" {
 			return "cat"
 		}
@@ -61,6 +61,19 @@ func (a *App) bookingPet(w http.ResponseWriter, r *http.Request) {
 	}(), vs["age"], vs["weight"], mustJSON(answers))
 	if e != nil {
 		a.fail(w, r, "انتخاب پت ثبت نشد", 500)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		a.fail(w, r, "مرحلهٔ درخواست تغییر کرده؛ صفحه را تازه کنید.", 409)
+		return
+	}
+	if r.Header.Get("HX-Request") == "true" {
+		fresh, err := a.getBooking(r)
+		if err != nil {
+			a.fail(w, r, "اطلاعات پت بارگذاری نشد", 500)
+			return
+		}
+		a.renderFragment(w, r, "booking-pet-fields", "#booking-pet-fields", a.bookingData(r, fresh, ""))
 		return
 	}
 	redirect(w, r, "/booking/"+b.ID)

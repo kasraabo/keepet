@@ -90,6 +90,14 @@ func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 		}
 	}
 	p.Slots, _ = a.slots(r.Context(), b)
+	if b.Stage == 2 && b.Service != "sampling" {
+		v, e := a.discover(r, &b)
+		if e != nil {
+			p.Error = "فهرست متخصصان بارگذاری نشد؛ صفحه را تازه کنید."
+			v = &DiscoveryView{Service: b.Service, Booking: true, Error: p.Error}
+		}
+		p.Discovery = v
+	}
 	return p
 }
 func (a *App) bookingPage(w http.ResponseWriter, r *http.Request) {
@@ -106,7 +114,12 @@ func (a *App) bookingPage(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "/login?next=/booking/"+b.ID)
 		return
 	}
-	a.render(w, r, "booking", a.bookingData(r, b, ""))
+	p := a.bookingData(r, b, "")
+	if r.Header.Get("HX-Request") == "true" && b.Stage == 2 && b.Service != "sampling" {
+		a.renderFragment(w, r, "provider-results", "#provider-results", p)
+		return
+	}
+	a.render(w, r, "booking", p)
 }
 func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 	b, err := a.getBooking(r)
@@ -138,6 +151,28 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 	}
 	switch step {
 	case 1:
+		if _, ok := r.Form["pet_id"]; ok {
+			r.Form.Set("selected_pet", r.FormValue("pet_id"))
+		}
+		if _, ok := r.Form["selected_pet"]; ok {
+			id := r.FormValue("selected_pet")
+			if id != "" {
+				var owns bool
+				if sess(r).User == nil {
+					bad("ابتدا وارد حساب شوید.")
+					return
+				}
+				e := a.DB.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM pets WHERE id=$1 AND user_id=$2)", id, sess(r).User.ID).Scan(&owns)
+				if e != nil || !owns {
+					bad("پت انتخابی در حساب شما در دسترس نیست.")
+					return
+				}
+			}
+			if b.Answers == nil {
+				b.Answers = map[string]string{}
+			}
+			b.Answers["_pet_id"] = r.FormValue("selected_pet")
+		}
 		b.PetName = strings.TrimSpace(r.FormValue("pet_name"))
 		b.Species = r.FormValue("species")
 		b.Age = normalize(r.FormValue("age"))

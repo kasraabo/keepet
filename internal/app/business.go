@@ -103,6 +103,9 @@ func (a *App) seedBusiness(ctx context.Context) error {
 	if e := put("triage", "vet", BusinessData{Questions: a.Triage, Enabled: true}); e != nil {
 		return e
 	}
+	if e := a.seedDiscovery(ctx); e != nil {
+		return e
+	}
 	return a.seedForms(ctx)
 }
 func (a *App) records(ctx context.Context, kind string) ([]BusinessRecord, error) {

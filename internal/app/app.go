@@ -83,7 +83,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -268,6 +268,10 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /management/questionnaires/{scope}", a.saveQuestions)
 	m.HandleFunc("GET /profile", a.ownerProfile)
 	m.HandleFunc("POST /profile", a.saveOwnerProfile)
+	m.HandleFunc("GET /specialists", a.providerDirectory)
+	m.HandleFunc("GET /management/discovery", a.discoveryAdmin)
+	m.HandleFunc("POST /management/discovery/settings/{service}", a.saveDiscovery)
+	m.HandleFunc("POST /management/discovery/providers/{id}", a.saveDiscoveryFacts)
 	m.HandleFunc("GET /specialists/{id}", a.specialistPage)
 	m.HandleFunc("GET /provider/profile", a.specialistEditor)
 	m.HandleFunc("POST /provider/profile", a.saveSpecialist)

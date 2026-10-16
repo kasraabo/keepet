@@ -103,14 +103,17 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
-	Wallet  *WalletPage
-	Form    FormView
-	PetForm FormView
-	Forms   []FormView
-	FAQs    []BusinessRecord
-	Profile *SpecialistProfile
-	SEO     SEOData
-	SEOBody string
+	Discovery          *DiscoveryView
+	DiscoverySettings  []DiscoveryRecord
+	DiscoveryProviders []DiscoveryProvider
+	Wallet             *WalletPage
+	Form               FormView
+	PetForm            FormView
+	Forms              []FormView
+	FAQs               []BusinessRecord
+	Profile            *SpecialistProfile
+	SEO                SEOData
+	SEOBody            string
 
 	AssignmentSlots map[string][]Slot
 	Chat            *ChatView

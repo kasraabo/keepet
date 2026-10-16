@@ -86,3 +86,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 راهنمای کامل کار با سایت برای تمام نقش‌ها، همراه حساب‌های تست و لینک‌های کلیک‌پذیر: [دانلود PDF فارسی](docs/keepet-user-guide-fa.pdf) · [نسخهٔ HTML مستقل](docs/user-guide-fa.html). برای بازسازی فایل: `python3 scripts/build-user-guide.py` سپس `node scripts/build-user-guide.cjs` (نیازمند Chromium، Playwright و PyMuPDF).
 
 کیف پول کاربران و متخصصان، برداشت دستی با شبا و رسید، اعتبار هدیه و محل اتصال پاداش معرفی: [راهنمای کیف پول](docs/wallet.md). مسیرها: `/wallet` و `/management/wallet`. راهنمای PDF بالا مربوط به نسخهٔ پیش از کیف پول است؛ آموزش این قابلیت در سند کیف پول آمده است.
+
+انتخاب خودکار پت در هر سه خدمت و جست‌وجو/فیلتر/مرتب‌سازی دامپزشک و گرومر با تنظیمات مستقل مدیریت: [راهنمای فهرست متخصصان](docs/provider-discovery.md). تنظیمات در `/management/discovery` و فهرست عمومی در `/specialists` است.
