@@ -57,9 +57,17 @@ stopped=true
 docker compose exec -T db pg_dump -U keepet -d keepet -Fc > "$backup/database.dump"
 test -s "$backup/database.dump"
 docker compose exec -T db pg_restore -l < "$backup/database.dump" > "$backup/database-contents.txt"
-docker cp "$app_id:/var/lib/keepet/settings.key" "$backup/settings.key"
-test -s "$backup/settings.key"
-chmod 600 "$backup/settings.key"
+mkdir -p "$backup/app-secrets"
+docker cp "$app_id:/var/lib/keepet/." "$backup/app-secrets/"
+encrypted_count=$(docker compose exec -T db psql -U keepet -d keepet -Atqc \
+  'SELECT count(*) FROM platform_integrations WHERE secret IS NOT NULL;')
+if [ "$encrypted_count" -gt 0 ]; then
+  test -s "$backup/app-secrets/settings.key"
+fi
+# A new trial installation creates this key only when a credential is saved.
+if [ -f "$backup/app-secrets/settings.key" ]; then
+  chmod 600 "$backup/app-secrets/settings.key"
+fi
 docker compose up -d --no-build
 started=true
 healthy=false
