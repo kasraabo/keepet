@@ -1,5 +1,6 @@
 services:
   db:
+    restart: unless-stopped
     image: postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
     environment:
       POSTGRES_USER: keepet
@@ -12,6 +13,7 @@ services:
       timeout: 3s
       retries: 15
   app:
+    restart: unless-stopped
     build: .
     environment:
       APP_MODE: development

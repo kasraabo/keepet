@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	assets "keepet"
 	"net/http/httptest"
 	"net/url"
 	"os"
@@ -32,7 +33,7 @@ func TestReferralProgram(t *testing.T) {
 	}
 	defer a.Close()
 	defer func() { a.DB.Exec(ctx, "TRUNCATE referral_settings;INSERT INTO referral_settings(id) VALUES(1)") }()
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE;TRUNCATE business_config"); e != nil {
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE;TRUNCATE business_config;TRUNCATE referral_settings;INSERT INTO referral_settings(id) VALUES(1)"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {
@@ -63,6 +64,38 @@ func TestReferralProgram(t *testing.T) {
 		}
 	}
 	var code ReferralCode
+	t.Run("launch terms migrate once and preserve administrator choices", func(t *testing.T) {
+		tx, err := a.DB.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		sql, err := assets.Files.ReadFile("migrations/000011_referral_launch_terms.up.sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, string(sql)); err != nil {
+			t.Fatal(err)
+		}
+		var enabled, provider, welcome, signup bool
+		var amount, vet, groom, sample, revision int64
+		var basis string
+		if err = tx.QueryRow(ctx, "SELECT enabled,provider_enabled,invitee_bonus_enabled,referrer_bonus_enabled,invitee_bonus,vet_bps,grooming_bps,sampling_bps,revision,basis FROM referral_settings WHERE id=1").Scan(&enabled, &provider, &welcome, &signup, &amount, &vet, &groom, &sample, &revision, &basis); err != nil {
+			t.Fatal(err)
+		}
+		if !enabled || !provider || !welcome || signup || amount != 200000 || vet != 1000 || groom != 1000 || sample != 1000 || revision != 2 || basis != "platform_share" {
+			t.Fatal("incorrect launch terms", amount, vet, groom, sample, revision, basis)
+		}
+		if _, err = tx.Exec(ctx, "UPDATE referral_settings SET invitee_bonus=123456,revision=revision+1"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err = tx.Exec(ctx, string(sql)); err != nil {
+			t.Fatal(err)
+		}
+		if err = tx.QueryRow(ctx, "SELECT invitee_bonus,revision FROM referral_settings WHERE id=1").Scan(&amount, &revision); err != nil || amount != 123456 || revision != 3 {
+			t.Fatal("overwrote administrator settings", amount, revision, err)
+		}
+	})
 	t.Run("code allocation, owner access, admin access and disabled defaults", func(t *testing.T) {
 		code, e = a.ensureReferralCode(ctx, parentID)
 		if e != nil || !referralCodeRE.MatchString(code.Code) {
