@@ -84,7 +84,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"requestPanel": func(p Page, b Booking) Page { p.Booking = &b; return p }, "editorialVideo": editorialVideo, "editorialPosition": editorialPosition, "referralPercent": referralPercent, "referralKind": referralKind, "optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"requestPanel": func(p Page, b Booking) Page { p.Booking = &b; return p }, "opsStatuses": func() []string { return opsStatuses }, "socialSlots": socialSlots, "persianFields": func() []PersianField { return persianFields }, "editorialVideo": editorialVideo, "editorialPosition": editorialPosition, "referralPercent": referralPercent, "referralKind": referralKind, "optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -248,7 +248,16 @@ func (a *App) middleware(next http.Handler) http.Handler {
 func (a *App) Handler() http.Handler {
 	m := http.NewServeMux()
 	static, _ := fs.Sub(assets.Files, "web/static")
-	m.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	staticHandler := http.StripPrefix("/static/", http.FileServer(http.FS(static)))
+	m.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/static/")
+		info, err := fs.Stat(static, name)
+		if err != nil || info.IsDir() {
+			http.Error(w, "فایل موردنظر پیدا نشد", 404)
+			return
+		}
+		staticHandler.ServeHTTP(w, r)
+	}))
 	for _, p := range []string{"sw.js", "manifest.webmanifest"} {
 		m.HandleFunc("GET /"+p, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/sw.js" {
@@ -329,7 +338,7 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /robots.txt", a.robots)
 	m.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		if a.DB.Ping(r.Context()) != nil {
-			http.Error(w, "database unavailable", 503)
+			http.Error(w, "دیتابیس در دسترس نیست", 503)
 			return
 		}
 		fmt.Fprint(w, "ok")
@@ -348,6 +357,14 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /content/magazine-layout", a.saveMagazineLayout)
 	m.HandleFunc("POST /content/media", a.editorialUpload)
 	m.HandleFunc("GET /editorial-media/{id}", a.editorialAsset)
+	m.HandleFunc("GET /management/subservices", a.serviceCatalog)
+	m.HandleFunc("POST /management/subservices/grooming/{id}", a.saveGroomingService)
+	m.HandleFunc("POST /management/subservices/pages/{id}", a.saveServicePage)
+	m.HandleFunc("GET /services/{service}/{page}", a.serviceDetail)
+	m.HandleFunc("GET /management/site-details", a.siteDetailsAdmin)
+	m.HandleFunc("POST /management/site-details", a.saveSiteDetails)
+	m.HandleFunc("POST /management/interface", a.saveInterface)
+	m.HandleFunc("GET /interface-config", a.interfaceConfig)
 	m.HandleFunc("GET /login", a.loginPage)
 	m.HandleFunc("GET /provider/login", a.providerLogin)
 	m.HandleFunc("POST /auth/google", a.googleStart)
@@ -430,7 +447,30 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /magazine/{slug}", a.article)
 	m.HandleFunc("POST /provider/articles/{id}/review", a.reviewArticle)
 	m.HandleFunc("GET /pages/{slug}", a.publicPage)
-	return a.middleware(m)
+	return a.middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pattern := m.Handler(r)
+		if pattern == "" {
+			allowed := []string{}
+			for _, method := range []string{"GET", "POST"} {
+				copy := r.Clone(r.Context())
+				copy.Method = method
+				if _, other := m.Handler(copy); other != "" {
+					allowed = append(allowed, method)
+					if method == "GET" {
+						allowed = append(allowed, "HEAD")
+					}
+				}
+			}
+			if len(allowed) > 0 {
+				w.Header().Set("Allow", strings.Join(allowed, ", "))
+				a.fail(w, r, "این روش ارسال درخواست برای صفحه مجاز نیست", 405)
+				return
+			}
+			a.fail(w, r, "صفحهٔ موردنظر پیدا نشد", 404)
+			return
+		}
+		m.ServeHTTP(w, r)
+	}))
 }
 func (a *App) page(r *http.Request, title string) Page {
 	s := sess(r)
@@ -438,6 +478,7 @@ func (a *App) page(r *http.Request, title string) Page {
 	p := Page{OTPResend: policy.Resend, IsManagement: strings.HasPrefix(r.URL.Path, "/management"), CodeDigits: policy.Digits, CodeTTL: policy.TTL, Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
 	p.UnreadNotifications = a.notificationCount(r)
 	a.livePage(r.Context(), &p)
+	p.SiteDetails = a.loadSiteDetails(r.Context())
 	a.applySEO(r, &p)
 	return p
 }
@@ -519,6 +560,7 @@ func (a *App) landing(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	p.Service = s
+	p.ServiceLinks = a.servicePageLinks(r.Context(), s.ID)
 	p.Providers, _ = a.providers(r.Context(), s.ID)
 	for i := range p.Providers {
 		if s.ID == "vet" {

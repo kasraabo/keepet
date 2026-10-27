@@ -45,7 +45,7 @@ func (a *App) pricingRules(ctx context.Context, svc string) (BusinessData, error
 	return d, e
 }
 func (a *App) groomTariffs(ctx context.Context, id string) ([]TariffItem, error) {
-	rows, e := a.DB.Query(ctx, `SELECT c.id,c.data->>'name',COALESCE(t.price,(c.data->>'price')::bigint),COALESCE(t.enabled,true),COALESCE(t.duration_minutes,NULLIF((c.data->>'duration_minutes')::integer,0),30) FROM business_config c LEFT JOIN provider_tariffs t ON t.service_id=c.id AND t.provider_id=$1 WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean ORDER BY c.id`, id)
+	rows, e := a.DB.Query(ctx, `SELECT c.id,c.data->>'name',COALESCE(t.price,(c.data->>'price')::bigint),COALESCE(t.enabled,NOT COALESCE((c.data->>'provider_priced')::boolean,false)),COALESCE(t.duration_minutes,NULLIF((c.data->>'duration_minutes')::integer,0),30) FROM business_config c LEFT JOIN provider_tariffs t ON t.service_id=c.id AND t.provider_id=$1 WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean ORDER BY c.id`, id)
 	if e != nil {
 		return nil, e
 	}
@@ -261,6 +261,13 @@ func (a *App) saveProviderPricing(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, m := range ms {
+			enabled := r.FormValue("enabled_"+m.ID) == "on"
+			if !enabled && (normalizeNumber(r.FormValue("price_"+m.ID)) == "" || normalizeNumber(r.FormValue("price_"+m.ID)) == "0") {
+				if _, e = tx.Exec(ctx, "UPDATE provider_tariffs SET enabled=false WHERE provider_id=$1 AND service_id=$2", id, m.ID); e != nil {
+					break
+				}
+				continue
+			}
 			v, err := parse("price_" + m.ID)
 			if err != nil {
 				a.fail(w, r, err.Error(), 400)

@@ -16,12 +16,17 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "خدمت نامعتبر", 404)
 		return
 	}
+	answers, items, sample, area, e := a.serviceDraft(r, svc.ID)
+	if e != nil {
+		a.fail(w, r, e.Error(), 409)
+		return
+	}
 	id := token()
 	owner := ""
 	if sess(r).User != nil {
 		owner = sess(r).User.ID
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true,true,$4='sampling')", id, sess(r).Token, owner, svc.ID, token())
+	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow,answers,items,sample,area) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true,true,$4='sampling',$6,$7,$8,$9)", id, sess(r).Token, owner, svc.ID, token(), mustJSON(answers), items, sample, area)
 	if err != nil {
 		a.fail(w, r, "ایجاد درخواست انجام نشد", 500)
 		return
@@ -56,6 +61,18 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 	p := a.page(r, service(b.Service).Name)
 	p.Booking = &b
+	if b.Answers["_service_page"] != "" {
+		areas := []Area{}
+		for _, v := range p.Areas {
+			if sourceAreaAllowed(b.Answers, v.ID) {
+				areas = append(areas, v)
+			}
+		}
+		p.Areas = areas
+		for i := range p.MapAreas {
+			p.MapAreas[i].Enabled = p.MapAreas[i].Enabled && sourceAreaAllowed(b.Answers, p.MapAreas[i].ID)
+		}
+	}
 	if b.LabFlow {
 		p.Samples = a.labMenu(r.Context())
 	}
@@ -246,6 +263,11 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			bad(e.Error())
 			return
 		}
+		for _, key := range []string{"_service_page", "_service_areas"} {
+			if v := b.Answers[key]; v != "" {
+				answers[key] = v
+			}
+		}
 		b.Answers = answers
 		b.Answers["birth_year"] = petAnswers["birth_year"]
 		b.Answers["_pet_id"] = selectedPet
@@ -264,7 +286,7 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		}
 		b.Area = r.FormValue("area")
 		b.Address = strings.TrimSpace(r.FormValue("address"))
-		if b.Service != "vet" && (!a.enabled(r.Context(), "area", b.Area) || len(b.Address) < 10) {
+		if b.Service != "vet" && (!a.enabled(r.Context(), "area", b.Area) || !sourceAreaAllowed(b.Answers, b.Area) || len(b.Address) < 10) {
 			bad("محلهٔ تحت پوشش و آدرس کامل لازم است.")
 			return
 		}

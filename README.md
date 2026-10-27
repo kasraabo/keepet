@@ -112,3 +112,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 راهنمای مرحلهٔ جدید: [ورود، ثبت‌نام و تنظیم گوگل](docs/auth-onboarding.md).
 
 راهنمای تحریریه: [Keepet Mag، رسانه، پیش‌نمایش و سئو](docs/editorial-mag-seo.md).
+
+راهنمای مرحلهٔ جدید: [زیرخدمات، عملیات، تماس و ورودی فارسی](docs/service-management-interface.md).

@@ -103,6 +103,10 @@ func editorialSEOPath(r *http.Request) string {
 	return r.URL.Path
 }
 func editorialPublicPath(raw string) bool {
+	parts := strings.Split(raw, "/")
+	if len(parts) == 4 && parts[1] == "services" && service(parts[2]).ID != "" && businessID.MatchString(parts[3]) {
+		return true
+	}
 	if contains([]string{"/", "/support", "/join", "/services/vet", "/services/grooming", "/services/sampling", "/specialists?service=vet", "/specialists?service=grooming"}, raw) {
 		return true
 	}

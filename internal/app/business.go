@@ -15,6 +15,12 @@ import (
 )
 
 type BusinessData struct {
+	ProviderPriced bool     `json:"provider_priced,omitempty"`
+	ParentService  string   `json:"parent_service,omitempty"`
+	RelatedProduct string   `json:"related_product,omitempty"`
+	Coverage       []string `json:"coverage,omitempty"`
+	Position       int      `json:"position,omitempty"`
+
 	ContentType string           `json:"content_type,omitempty"`
 	Cover       string           `json:"cover,omitempty"`
 	Video       string           `json:"video,omitempty"`
@@ -114,6 +120,9 @@ func (a *App) seedBusiness(ctx context.Context) error {
 	if e := a.seedDiscovery(ctx); e != nil {
 		return e
 	}
+	if e := a.seedSiteDetails(ctx); e != nil {
+		return e
+	}
 	return a.seedForms(ctx)
 }
 func (a *App) records(ctx context.Context, kind string) ([]BusinessRecord, error) {
@@ -185,7 +194,7 @@ func (a *App) livePage(ctx context.Context, p *Page) {
 						s.Price = q.Total
 					}
 				} else if s.ID == "grooming" {
-					a.DB.QueryRow(ctx, `SELECT COALESCE(min(COALESCE(t.price,(c.data->>'price')::bigint)),0) FROM providers p CROSS JOIN business_config c LEFT JOIN provider_tariffs t ON t.provider_id=p.id AND t.service_id=c.id WHERE p.service='grooming' AND p.active AND p.verified AND c.kind='grooming' AND (c.data->>'enabled')::boolean AND COALESCE(t.enabled,true)`).Scan(&s.Price)
+					a.DB.QueryRow(ctx, `SELECT COALESCE(min(COALESCE(t.price,(c.data->>'price')::bigint)),0) FROM providers p CROSS JOIN business_config c LEFT JOIN provider_tariffs t ON t.provider_id=p.id AND t.service_id=c.id WHERE p.service='grooming' AND p.active AND p.verified AND c.kind='grooming' AND (c.data->>'enabled')::boolean AND COALESCE(t.enabled,NOT COALESCE((c.data->>'provider_priced')::boolean,false))`).Scan(&s.Price)
 					q := PriceQuote{Base: s.Price}
 					if addPriceFees(&q, r.Data) == nil {
 						s.Price = q.Total
@@ -602,6 +611,10 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			case "grooming", "sampling":
+				if kind == "grooming" && d.ProviderPriced {
+					d.Price = old.Price
+					break
+				}
 				d.Price, e = strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
 				if e != nil || d.Price < 1 || d.Price > 1000000000 {
 					a.fail(w, r, "قیمت مثبت و حداکثر یک میلیارد تومان لازم است", 400)

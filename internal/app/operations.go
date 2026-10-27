@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -13,9 +14,12 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "مرکز عملیات")
 	var err error
-	p.Bookings, err = a.bookings(r.Context(), "payment_status='paid' OR status='pending_ops'")
-	if err != nil {
-		a.fail(w, r, "صف عملیات بارگذاری نشد", 500)
+	if err = a.loadOperations(r, &p); err != nil {
+		code := 500
+		if errors.Is(err, errOperationsFilters) {
+			code = 400
+		}
+		a.fail(w, r, "صف عملیات یا فیلترها بارگذاری نشدند؛ مقادیر جست‌وجو را بررسی کنید", code)
 		return
 	}
 	p.Providers, _ = a.providers(r.Context(), "")
@@ -29,16 +33,6 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	rows, err := a.DB.Query(r.Context(), "SELECT id,user_id,service,name,license,bio,area,price,status,reason FROM applications ORDER BY created_at DESC")
-	if err == nil {
-		for rows.Next() {
-			var ap Application
-			rows.Scan(&ap.ID, &ap.UserID, &ap.Service, &ap.Name, &ap.License, &ap.Bio, &ap.Area, &ap.Price, &ap.Status, &ap.Reason)
-			p.Applications = append(p.Applications, ap)
-		}
-		rows.Close()
-	}
-	p.Tickets, _ = a.tickets(r, "")
 	p.Chats, err = a.chatSummaries(r, "")
 	if err != nil {
 		a.fail(w, r, "گفتگوها بارگذاری نشد", 500)
@@ -395,8 +389,21 @@ func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 	}
 	bio := strings.TrimSpace(r.FormValue("bio"))
 	price, err := strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
-	if service(svc).ID == "" || name == "" || bio == "" || err != nil || price < 0 || (svc == "vet" && license == "") {
-		a.fail(w, r, "اطلاعات، تعرفه و مدارک صلاحیت را کامل کنید", 400)
+	message := ""
+	switch {
+	case service(svc).ID == "":
+		message = "حوزهٔ همکاری را انتخاب کنید."
+	case name == "":
+		message = "نام و نام خانوادگی را وارد کنید."
+	case bio == "":
+		message = "معرفی و صلاحیت حرفه‌ای را تکمیل کنید."
+	case err != nil || price < 0 || price > 1000000000:
+		message = "تعرفهٔ پیشنهادی را به‌صورت عدد معتبر تا یک میلیارد تومان وارد کنید."
+	case svc == "vet" && license == "":
+		message = "شمارهٔ نظام یا مجوز دامپزشکی را وارد کنید."
+	}
+	if message != "" {
+		a.fail(w, r, message, 400)
 		return
 	}
 	f := a.form(r.Context(), "signup-"+svc, nil)

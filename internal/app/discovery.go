@@ -311,7 +311,7 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 	}
 	windows := map[string][]Slot{}
 	now := time.Now()
-	rows, e = a.DB.Query(r.Context(), `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.service=$1 AND p.active AND p.verified AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND booking_window_has_time(a.id,CASE WHEN $1='vet' THEN COALESCE(NULLIF((SELECT (data->>'visit_minutes')::integer FROM business_config WHERE kind='service' AND id='vet'),0),30) WHEN $1='sampling' THEN COALESCE(NULLIF((SELECT (data->>'duration_minutes')::integer FROM business_config WHERE kind='service' AND id='sampling'),0),30) ELSE COALESCE((SELECT min(COALESCE(t.duration_minutes,NULLIF((c.data->>'duration_minutes')::integer,0),30)) FROM business_config c LEFT JOIN provider_tariffs t ON t.provider_id=p.id AND t.service_id=c.id WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean AND COALESCE(t.enabled,true)),30) END,'') ORDER BY a.day,a.start_time,a.id`, svc)
+	rows, e = a.DB.Query(r.Context(), `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.service=$1 AND p.active AND p.verified AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND booking_window_has_time(a.id,CASE WHEN $1='vet' THEN COALESCE(NULLIF((SELECT (data->>'visit_minutes')::integer FROM business_config WHERE kind='service' AND id='vet'),0),30) WHEN $1='sampling' THEN COALESCE(NULLIF((SELECT (data->>'duration_minutes')::integer FROM business_config WHERE kind='service' AND id='sampling'),0),30) ELSE COALESCE((SELECT min(COALESCE(t.duration_minutes,NULLIF((c.data->>'duration_minutes')::integer,0),30)) FROM business_config c LEFT JOIN provider_tariffs t ON t.provider_id=p.id AND t.service_id=c.id WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean AND COALESCE(t.enabled,NOT COALESCE((c.data->>'provider_priced')::boolean,false))),30) END,'') ORDER BY a.day,a.start_time,a.id`, svc)
 	if e != nil {
 		return nil, e
 	}
@@ -354,6 +354,7 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 			}
 			card.Cost = 0
 			for _, m := range menu {
+
 				if m.Enabled {
 					q, err := a.quote(r.Context(), Booking{Service: svc, ProviderID: p.ID, Items: []string{m.ID}})
 					if err != nil {
@@ -363,6 +364,13 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 						card.Cost = q.Total
 					}
 				}
+			}
+			if b != nil && len(b.Items) > 0 {
+				q, err := a.quote(r.Context(), Booking{Service: svc, ProviderID: p.ID, Items: b.Items})
+				if err != nil {
+					continue
+				}
+				card.Cost = q.Total
 			}
 			if card.Cost == 0 {
 				continue

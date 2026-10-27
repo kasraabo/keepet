@@ -109,7 +109,12 @@ func (a *App) publicPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if d, ok := a.customPage(r, slug); ok {
+		if d.ParentService != "" {
+			http.Redirect(w, r, "/services/"+d.ParentService+"/"+slug, http.StatusPermanentRedirect)
+			return
+		}
 		p := a.page(r, d.Name)
+		p.ShowContacts = slug == "about" || slug == "contact"
 		p.Content = d.Body
 		p.Posts = []BusinessRecord{{Kind: "page", ID: slug, Data: d}}
 		a.render(w, r, "editorial-page", p)
@@ -126,6 +131,7 @@ func (a *App) publicPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := a.page(r, c[0])
+	p.ShowContacts = slug == "about" || slug == "contact"
 	p.Content = c[1]
 	a.render(w, r, "public", p)
 }

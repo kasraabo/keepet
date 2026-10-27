@@ -95,8 +95,11 @@ func validFormQuestions(qs []Question) error {
 		if !businessID.MatchString(q.ID) || seen[q.ID] || strings.TrimSpace(q.Label) == "" || len(q.Label) > 500 || !contains([]string{"text", "textarea", "select", "radio", "checkbox", "number", "email", "date"}, q.Type) {
 			return fmt.Errorf("شناسه، عنوان یا نوع سؤال نامعتبر است")
 		}
+		if q.Persian && (!contains([]string{"text", "textarea"}, q.Type) || protectedPersianField(q.ID)) {
+			return fmt.Errorf("تبدیل فارسی فقط برای ورودی متنی غیرحساس قابل فعال‌سازی است")
+		}
 		seen[q.ID] = true
-		if contains([]string{"csrf", "step", "next", "service", "provider", "code", "terms", "consent", "sample", "area", "address", "pet_id", "id", "revision", "questions", "payment_key", "outcome"}, q.ID) {
+		if contains([]string{"csrf", "step", "next", "service", "provider", "code", "terms", "consent", "sample", "area", "address", "pet_id", "id", "revision", "questions", "payment_key", "outcome", "service_page"}, q.ID) {
 			return fmt.Errorf("شناسه رزرو شده است")
 		}
 		if q.Type == "select" || q.Type == "radio" {

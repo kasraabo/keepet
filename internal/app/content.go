@@ -158,7 +158,11 @@ func (a *App) sitemap(w http.ResponseWriter, r *http.Request) {
 				if kind == "article" {
 					prefix = "/magazine/"
 				}
-				out.URLs = append(out.URLs, URL{base + prefix + v.ID})
+				if kind == "page" && v.Data.ParentService != "" {
+					out.URLs = append(out.URLs, URL{base + "/services/" + v.Data.ParentService + "/" + v.ID})
+				} else {
+					out.URLs = append(out.URLs, URL{base + prefix + v.ID})
+				}
 			}
 		}
 	}

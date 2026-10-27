@@ -11,6 +11,8 @@ type QuestionOption struct {
 	Label string `json:"label"`
 }
 type Question struct {
+	Persian bool `json:"persian,omitempty"`
+
 	ID       string           `json:"id"`
 	Label    string           `json:"label"`
 	Type     string           `json:"type"`
@@ -123,6 +125,13 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	ServiceCatalog *ServiceCatalogPage
+	ServiceLinks   []BusinessRecord
+	SiteDetails    *SiteDetails
+	ShowContacts   bool
+	Interface      *InterfaceSettings
+	OpsView        *OperationsView
+
 	Editorial *EditorialPage
 	SEORich   *BusinessData
 
