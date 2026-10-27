@@ -95,9 +95,13 @@ func (a *App) replyTicket(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "پاسخ خالی است", 400)
 		return
 	}
-	_, err := a.DB.Exec(r.Context(), "UPDATE tickets SET reply=$2,status='closed' WHERE id=$1", r.PathValue("id"), reply)
+	tag, err := a.DB.Exec(r.Context(), "UPDATE tickets SET reply=$2,status='closed' WHERE id=$1", r.PathValue("id"), reply)
 	if err != nil {
 		a.fail(w, r, "پاسخ ثبت نشد", 500)
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		a.fail(w, r, "درخواست پشتیبانی پیدا نشد", 404)
 		return
 	}
 	redirect(w, r, opsHome(r))

@@ -1,0 +1,17 @@
+DROP TRIGGER wallet_freeze_notification ON wallets;
+DROP FUNCTION notify_wallet_freeze();
+ALTER TABLE wallets DROP COLUMN notification_revision;
+DROP TRIGGER editorial_change_notification ON business_audit;
+DROP FUNCTION notify_editorial_change();
+DROP TRIGGER ticket_notification ON tickets;
+DROP FUNCTION notify_ticket();
+DROP TRIGGER withdrawal_notification ON wallet_withdrawals;
+DROP FUNCTION notify_withdrawal();
+DROP TRIGGER bank_account_notification ON wallet_bank_accounts;
+DROP FUNCTION notify_bank_account();
+DROP TRIGGER wallet_entry_notification ON wallet_entries;
+DROP FUNCTION notify_wallet_entry();
+DELETE FROM notifications WHERE kind IN ('wallet_entry','wallet_account','bank_account','withdrawal','wallet_operations','ticket','ticket_operations','editorial');
+ALTER TABLE notifications DROP COLUMN source_id,DROP COLUMN source_user_id;
+ALTER TABLE tickets DROP COLUMN notification_revision;
+ALTER TABLE wallet_withdrawals DROP COLUMN notification_revision;

@@ -114,14 +114,14 @@ func (a *App) loadOperations(r *http.Request, p *Page) error {
 	if e != nil {
 		return e
 	}
-	where = `($1='' OR status=$1) AND ($2='%%' OR subject ILIKE $2 OR id ILIKE $2 OR email ILIKE $2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=tickets.user_id AND (u.phone ILIKE $2 OR u.name ILIKE $2)))`
-	args = []any{v.TicketStatus, pattern}
+	where = `($3='' OR id=$3) AND ($1='' OR status=$1) AND ($2='%%' OR subject ILIKE $2 OR id ILIKE $2 OR email ILIKE $2 OR EXISTS(SELECT 1 FROM users u WHERE u.id=tickets.user_id AND (u.phone ILIKE $2 OR u.name ILIKE $2)))`
+	args = []any{v.TicketStatus, pattern, q.Get("ticket")}
 	if e = a.DB.QueryRow(ctx, "SELECT count(*) FROM tickets WHERE "+where, args...).Scan(&total); e != nil {
 		return e
 	}
 	v.Tickets = opsPager(r, "ticket_page", "tickets", total)
 	args = append(args, (v.Tickets.Page-1)*25)
-	rows, e = a.DB.Query(ctx, "SELECT id,subject,body,reply,status,email FROM tickets WHERE "+where+" ORDER BY created_at DESC,id DESC LIMIT 25 OFFSET $3", args...)
+	rows, e = a.DB.Query(ctx, "SELECT id,subject,body,reply,status,email FROM tickets WHERE "+where+" ORDER BY created_at DESC,id DESC LIMIT 25 OFFSET $4", args...)
 	if e != nil {
 		return e
 	}

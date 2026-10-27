@@ -196,9 +196,9 @@ func (a *App) walletView(w http.ResponseWriter, r *http.Request, msg string, cod
 		a.fail(w, r, "شبا بارگذاری نشد", 500)
 		return
 	}
-	v.Account.Entries, e = a.walletEntries(ctx, uid, v.Filter, offset, 100)
+	v.Account.Entries, e = a.walletEntries(ctx, uid, v.Filter, offset, 100, r.URL.Query().Get("entry"))
 	if e == nil {
-		v.Account.Withdrawals, e = a.walletWithdrawals(ctx, uid, "", offset)
+		v.Account.Withdrawals, e = a.walletWithdrawals(ctx, uid, "", offset, r.URL.Query().Get("withdrawal"))
 	}
 	if e != nil {
 		a.fail(w, r, "سوابق بارگذاری نشد", 500)
@@ -250,8 +250,11 @@ func (a *App) walletView(w http.ResponseWriter, r *http.Request, msg string, cod
 	}
 	a.render(w, r, "wallet", p)
 }
-func (a *App) walletEntries(ctx context.Context, uid, kind string, offset, limit int) ([]WalletEntry, error) {
-	rows, e := a.DB.Query(ctx, `SELECT e.id,e.user_id,u.name,e.kind,e.cash_delta,e.bonus_delta,e.reserved_delta,e.cash_after,e.bonus_after,e.reserved_after,COALESCE(e.booking_id,''),e.description,e.created_at FROM wallet_entries e JOIN users u ON u.id=e.user_id WHERE ($1='' OR e.user_id=$1) AND ($2='' OR e.kind=$2) ORDER BY e.id DESC LIMIT $3 OFFSET $4`, uid, kind, limit, offset)
+func (a *App) walletEntries(ctx context.Context, uid, kind string, offset, limit int, id string) ([]WalletEntry, error) {
+	if id != "" {
+		offset = 0
+	}
+	rows, e := a.DB.Query(ctx, `SELECT e.id,e.user_id,u.name,e.kind,e.cash_delta,e.bonus_delta,e.reserved_delta,e.cash_after,e.bonus_after,e.reserved_after,COALESCE(e.booking_id,''),e.description,e.created_at FROM wallet_entries e JOIN users u ON u.id=e.user_id WHERE ($1='' OR e.user_id=$1) AND ($2='' OR e.kind=$2) AND ($5='' OR e.id::text=$5) ORDER BY e.id DESC LIMIT $3 OFFSET $4`, uid, kind, limit, offset, id)
 	if e != nil {
 		return nil, e
 	}
@@ -267,8 +270,11 @@ func (a *App) walletEntries(ctx context.Context, uid, kind string, offset, limit
 	}
 	return out, rows.Err()
 }
-func (a *App) walletWithdrawals(ctx context.Context, uid, status string, offset int) ([]Withdrawal, error) {
-	rows, e := a.DB.Query(ctx, `SELECT x.id,x.user_id,u.name,u.phone,x.amount,x.iban,x.holder,x.status,COALESCE(x.operator_id,''),COALESCE(o.name,''),x.reason,x.sender_name,x.sender_account,x.receipt_hash,x.created_at,x.paid_at FROM wallet_withdrawals x JOIN users u ON u.id=x.user_id LEFT JOIN users o ON o.id=x.operator_id WHERE ($1='' OR x.user_id=$1) AND ($2='' OR x.status=$2) ORDER BY x.created_at DESC,x.id LIMIT 100 OFFSET $3`, uid, status, offset)
+func (a *App) walletWithdrawals(ctx context.Context, uid, status string, offset int, id string) ([]Withdrawal, error) {
+	if id != "" {
+		offset = 0
+	}
+	rows, e := a.DB.Query(ctx, `SELECT x.id,x.user_id,u.name,u.phone,x.amount,x.iban,x.holder,x.status,COALESCE(x.operator_id,''),COALESCE(o.name,''),x.reason,x.sender_name,x.sender_account,x.receipt_hash,x.created_at,x.paid_at FROM wallet_withdrawals x JOIN users u ON u.id=x.user_id LEFT JOIN users o ON o.id=x.operator_id WHERE ($1='' OR x.user_id=$1) AND ($2='' OR x.status=$2) AND ($4='' OR x.id=$4) ORDER BY x.created_at DESC,x.id LIMIT 100 OFFSET $3`, uid, status, offset, id)
 	if e != nil {
 		return nil, e
 	}
@@ -538,7 +544,7 @@ func (a *App) walletCSV(w http.ResponseWriter, r *http.Request) {
 		}
 		uid = strings.TrimSpace(r.URL.Query().Get("user"))
 	}
-	entries, e := a.walletEntries(r.Context(), uid, r.URL.Query().Get("kind"), 0, 10000)
+	entries, e := a.walletEntries(r.Context(), uid, r.URL.Query().Get("kind"), 0, 10000, "")
 	if e != nil {
 		a.fail(w, r, "خروجی آماده نشد", 500)
 		return

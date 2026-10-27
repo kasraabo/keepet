@@ -31,12 +31,12 @@ func (a *App) walletAdmin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.Settings = s
-	v.Requests, e = a.walletWithdrawals(ctx, v.Query, v.Filter, offset)
+	v.Requests, e = a.walletWithdrawals(ctx, v.Query, v.Filter, offset, r.URL.Query().Get("withdrawal"))
 	if e != nil {
 		a.fail(w, r, "برداشت‌ها بارگذاری نشد", 500)
 		return
 	}
-	e = a.DB.QueryRow(ctx, "SELECT count(*) FROM wallet_withdrawals WHERE ($1='' OR user_id=$1) AND ($2='' OR status=$2)", v.Query, v.Filter).Scan(&v.Count)
+	e = a.DB.QueryRow(ctx, "SELECT count(*) FROM wallet_withdrawals WHERE ($1='' OR user_id=$1) AND ($2='' OR status=$2) AND ($3='' OR id=$3)", v.Query, v.Filter, r.URL.Query().Get("withdrawal")).Scan(&v.Count)
 	if e == nil {
 		e = a.DB.QueryRow(ctx, "SELECT COALESCE(sum(cash),0),COALESCE(sum(bonus),0),COALESCE(sum(reserved),0) FROM wallets").Scan(&v.Cash, &v.Bonus, &v.Reserved)
 	}
@@ -87,7 +87,7 @@ func (a *App) walletAdmin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "کیف‌ها بارگذاری نشد", 500)
 		return
 	}
-	v.Entries, e = a.walletEntries(ctx, v.Query, "", offset, 100)
+	v.Entries, e = a.walletEntries(ctx, v.Query, "", offset, 100, "")
 	if e != nil {
 		a.fail(w, r, "دفتر بارگذاری نشد", 500)
 		return
