@@ -17,7 +17,7 @@ func (a *App) slotTimes(s *Slot) {
 // Capacity includes paid reservations, while an existing booking keeps its own
 // reserved place when operations assigns an exact time in that same window.
 func (a *App) assignmentSlots(ctx context.Context, b Booking) ([]Slot, error) {
-	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND x.payment_status='paid' AND x.status NOT IN ('cancelled','cancel_requested')) FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$2 AND $3=ANY(p.species) AND ($2='vet' OR $4=ANY(p.areas)) AND ($2<>'vet' OR p.id=$5) AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND ((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')>now() AND a.capacity>(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND x.payment_status='paid' AND x.status NOT IN ('cancelled','cancel_requested')) ORDER BY a.day,a.start_time,p.name,a.id`, b.ID, b.Service, b.Species, b.Area, b.ProviderID)
+	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND booking_holds_capacity(x.payment_status,x.status,x.stage_deadline)) FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$2 AND $3=ANY(p.species) AND ($2='vet' OR $4=ANY(p.areas)) AND ($2<>'vet' OR p.id=$5) AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND ((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')>now() AND a.capacity>(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND booking_holds_capacity(x.payment_status,x.status,x.stage_deadline)) ORDER BY a.day,a.start_time,p.name,a.id`, b.ID, b.Service, b.Species, b.Area, b.ProviderID)
 	if e != nil {
 		return nil, e
 	}
@@ -80,7 +80,7 @@ func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next 
 	}
 	var used int
 	if err == nil {
-		err = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND payment_status='paid' AND status NOT IN ('cancelled','cancel_requested')", slot).Scan(&used)
+		err = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND booking_holds_capacity(payment_status,status,stage_deadline)", slot).Scan(&used)
 	}
 	if err == nil && cap < used {
 		a.fail(w, r, "ظرفیت نمی‌تواند کمتر از رزروهای ثبت‌شده باشد؛ برای تغییر رزرو با عملیات هماهنگ کنید", 409)
@@ -142,7 +142,7 @@ func (a *App) assignedWindow(ctx context.Context, tx pgx.Tx, b Booking, r *http.
 	if slotID == "" {
 		// Compatibility with existing clients: resolve a real registered window,
 		// never manufacture one from an arbitrary operator-entered time.
-		e = tx.QueryRow(ctx, `SELECT a.id FROM availability a WHERE a.provider_id=$1 AND a.day=$2 AND a.start_time<=$3::time AND a.end_time>$3::time AND a.capacity>(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$4 AND x.payment_status='paid' AND x.status NOT IN ('cancelled','cancel_requested')) ORDER BY (a.id=$5) DESC,a.end_time-a.start_time,a.id LIMIT 1`, selected, exact.Format("2006-01-02"), exact.Format("15:04"), b.ID, b.AvailabilityID).Scan(&slotID)
+		e = tx.QueryRow(ctx, `SELECT a.id FROM availability a WHERE a.provider_id=$1 AND a.day=$2 AND a.start_time<=$3::time AND a.end_time>$3::time AND a.capacity>(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$4 AND booking_holds_capacity(x.payment_status,x.status,x.stage_deadline)) ORDER BY (a.id=$5) DESC,a.end_time-a.start_time,a.id LIMIT 1`, selected, exact.Format("2006-01-02"), exact.Format("15:04"), b.ID, b.AvailabilityID).Scan(&slotID)
 		if e != nil {
 			return s, exact, "برای این زمان بازهٔ آزاد ثبت نشده است؛ ابتدا متخصص بازه را ثبت کند و سپس از بازه‌های قابل تخصیص انتخاب کنید", 409
 		}
@@ -155,7 +155,7 @@ func (a *App) assignedWindow(ctx context.Context, tx pgx.Tx, b Booking, r *http.
 	if exact.Before(s.Start) || !exact.Before(s.End) {
 		return s, exact, "ساعت دقیق باید داخل بازهٔ ثبت‌شدهٔ متخصص باشد", 400
 	}
-	e = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id<>$2 AND payment_status='paid' AND status NOT IN ('cancelled','cancel_requested')", s.ID, b.ID).Scan(&s.Used)
+	e = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id<>$2 AND booking_holds_capacity(payment_status,status,stage_deadline)", s.ID, b.ID).Scan(&s.Used)
 	if e != nil || s.Used >= s.Capacity {
 		return s, exact, "ظرفیت این بازه پر یا بسته شده است؛ صفحه را تازه کنید و بازهٔ دیگری انتخاب کنید", 409
 	}

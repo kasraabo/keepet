@@ -22,6 +22,9 @@ func (a *App) startChatMaintenance() {
 				return
 			case <-ticker.C:
 				work, stop := context.WithTimeout(ctx, 10*time.Second)
+				if err := a.reconcileRequests(work); err != nil && ctx.Err() == nil {
+					log.Printf("request maintenance: %v", err)
+				}
 				if err := a.reconcileChats(work); err != nil && ctx.Err() == nil {
 					log.Printf("consultation expiry: %v", err)
 				}

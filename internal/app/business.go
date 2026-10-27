@@ -268,7 +268,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 			b.TriageRevision = v.Revision
 		}
 	}
-	e = a.DB.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status='draft'),count(*) FILTER(WHERE paid_at IS NOT NULL),count(*) FILTER(WHERE status IN ('completed','result_ready')),count(*) FILTER(WHERE status IN ('paid','confirmed','replacement_pending','cancel_requested')),COALESCE(sum(amount) FILTER(WHERE paid_at IS NOT NULL),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0) FROM bookings`).Scan(&b.Drafts, &b.Paid, &b.Completed, &b.Pending, &b.Gross, &b.Refund)
+	e = a.DB.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status='draft'),count(*) FILTER(WHERE paid_at IS NOT NULL),count(*) FILTER(WHERE status IN ('completed','result_ready')),count(*) FILTER(WHERE status IN ('paid','confirmed','replacement_pending','cancel_requested','pending_ops','pending_provider','awaiting_payment')),COALESCE(sum(amount) FILTER(WHERE paid_at IS NOT NULL),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0) FROM bookings`).Scan(&b.Drafts, &b.Paid, &b.Completed, &b.Pending, &b.Gross, &b.Refund)
 	if e != nil {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return

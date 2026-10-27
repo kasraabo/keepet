@@ -311,7 +311,7 @@ func (a *App) discover(r *http.Request, b *Booking) (*DiscoveryView, error) {
 	}
 	windows := map[string][]Slot{}
 	now := time.Now()
-	rows, e = a.DB.Query(r.Context(), `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.service=$1 AND p.active AND p.verified AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancel_requested','cancelled')) ORDER BY a.day,a.start_time,a.id`, svc)
+	rows, e = a.DB.Query(r.Context(), `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.service=$1 AND p.active AND p.verified AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND booking_holds_capacity(b.payment_status,b.status,b.stage_deadline)) ORDER BY a.day,a.start_time,a.id`, svc)
 	if e != nil {
 		return nil, e
 	}

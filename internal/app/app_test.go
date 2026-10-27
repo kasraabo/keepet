@@ -200,7 +200,11 @@ func TestIntegration(t *testing.T) {
 			if len(m) != 2 {
 				t.Fatal("missing draft id")
 			}
+			// This suite exercises historical paid-before-ops bookings. New request flow has its own integration suite.
 			id := m[1]
+			if _, e := a.DB.Exec(ctx, "UPDATE bookings SET request_flow=false WHERE id=$1", id); e != nil {
+				t.Fatal(e)
+			}
 			ids[svc] = id
 			v := url.Values{"step": {"1"}, "pet_name": {"موچی"}, "species": {"cat"}, "age": {"۲ سال"}, "weight": {"۴"}, "symptom": {"digestive"}, "duration": {"today"}, "appetite": {"less"}, "history": {"تست شرح حال"}, "consent": {"on"}, "area": {"vanak"}, "address": {"تهران ونک خیابان نمونه پلاک ۱"}, "sample": {"blood"}}
 			if svc == "sampling" {

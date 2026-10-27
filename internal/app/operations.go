@@ -13,7 +13,7 @@ func (a *App) ops(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "مرکز عملیات")
 	var err error
-	p.Bookings, err = a.bookings(r.Context(), "payment_status='paid'")
+	p.Bookings, err = a.bookings(r.Context(), "payment_status='paid' OR status='pending_ops'")
 	if err != nil {
 		a.fail(w, r, "صف عملیات بارگذاری نشد", 500)
 		return
@@ -72,6 +72,10 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "رزرو پیدا نشد", 404)
 		return
 	}
+	if b.RequestFlow && b.PaymentStatus != "paid" {
+		a.fail(w, r, "برای درخواست پرداخت‌نشده از کنترل تأیید درخواست استفاده کنید", 409)
+		return
+	}
 	action := r.FormValue("action")
 	detail := ""
 	event := action
@@ -100,6 +104,10 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(ctx, "UPDATE bookings SET provider_id=$2,availability_id=$3,exact_time=$4,meeting_url=$5,status='assigned' WHERE id=$1", b.ID, slot.ProviderID, slot.ID, exact, r.FormValue("meeting_url"))
 		detail = "زمان دقیق با مشتری و ارائه‌دهنده هماهنگ شد."
 	case "replace":
+		if b.RequestFlow {
+			a.fail(w, r, "برای تغییر متخصص، سفارش را با بازگشت کامل لغو و درخواست تازه ثبت کنید", 409)
+			return
+		}
 		if b.Service != "vet" || !contains([]string{"paid", "confirmed", "assigned", "accepted"}, b.Status) {
 			a.fail(w, r, "جایگزینی در این مرحله مجاز نیست", 409)
 			return
@@ -192,7 +200,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		p.Next = providerID
 		p.Profile, _ = a.specialist(r.Context(), providerID)
-		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
+		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND booking_holds_capacity(b.payment_status,b.status,b.stage_deadline)) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
 		if slotErr != nil {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return
@@ -214,7 +222,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return
 		}
-		p.Bookings, err = a.bookings(r.Context(), "provider_id=$1 AND status IN ('assigned','accepted','in_progress','collected','delivered','completed','result_ready')", providerID)
+		p.Bookings, err = a.bookings(r.Context(), "provider_id=$1 AND status IN ('pending_provider','awaiting_payment','assigned','accepted','in_progress','collected','delivered','completed','result_ready')", providerID)
 		if err != nil {
 			a.fail(w, r, "سفارش‌ها بارگذاری نشدند؛ صفحه را تازه کنید", 500)
 			return

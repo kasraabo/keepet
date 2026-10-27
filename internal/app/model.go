@@ -43,6 +43,10 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	RequestFlow, RequiresOpsApproval bool
+	StageDeadline                    *time.Time
+	RequestReason                    string
+
 	ProviderDue                                                                                                                                                                                                                                 int64
 	WalletCashUsed, WalletBonusUsed                                                                                                                                                                                                             int64
 	ID, SessionToken, OwnerID, Service, PetName, Species, Age, Weight, Area, Address, ProviderID, AvailabilityID, Sample, Status, PaymentStatus, PaymentKey, MeetingURL, Prescription, Result, ReplacementID, RefundReason, RefundStatus, Notes string
@@ -104,6 +108,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Approval *ApprovalView
+
 	Referrals          *ReferralPage
 	ReferralCode       string
 	MapAreas           []CoverageDistrict
@@ -166,7 +172,7 @@ func service(id string) Service {
 	return Service{}
 }
 func status(s string) string {
-	m := map[string]string{"draft": "پیش‌نویس", "paid": "در انتظار هماهنگی", "confirmed": "تأیید عملیات", "assigned": "تخصیص داده‌شده", "accepted": "پذیرفته‌شده", "in_progress": "در حال انجام", "collected": "نمونه گرفته شد", "delivered": "تحویل آزمایشگاه", "completed": "تکمیل‌شده", "result_ready": "نتیجه آماده", "replacement_pending": "در انتظار پذیرش جایگزین", "cancel_requested": "درخواست کنسلی", "cancelled": "لغوشده", "pending": "در انتظار بررسی", "approved": "تأییدشده", "rejected": "نیاز به اصلاح", "open": "در انتظار پاسخ", "closed": "پاسخ داده‌شده", "pending_refund": "در انتظار بازگشت", "refunded": "عودت به کیف پول ثبت شد"}
+	m := map[string]string{"pending_ops": "منتظر بررسی اپراتور", "pending_provider": "منتظر تأیید متخصص", "awaiting_payment": "آمادهٔ پرداخت", "request_rejected": "درخواست پذیرفته نشد", "request_expired": "مهلت درخواست تمام شد", "request_cancelled": "درخواست لغو شد", "draft": "پیش‌نویس", "paid": "در انتظار هماهنگی", "confirmed": "تأیید عملیات", "assigned": "تخصیص داده‌شده", "accepted": "پذیرفته‌شده", "in_progress": "در حال انجام", "collected": "نمونه گرفته شد", "delivered": "تحویل آزمایشگاه", "completed": "تکمیل‌شده", "result_ready": "نتیجه آماده", "replacement_pending": "در انتظار پذیرش جایگزین", "cancel_requested": "درخواست کنسلی", "cancelled": "لغوشده", "pending": "در انتظار بررسی", "approved": "تأییدشده", "rejected": "نیاز به اصلاح", "open": "در انتظار پاسخ", "closed": "پاسخ داده‌شده", "pending_refund": "در انتظار بازگشت", "refunded": "عودت به کیف پول ثبت شد"}
 	if v, ok := m[s]; ok {
 		return v
 	}

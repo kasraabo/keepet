@@ -21,7 +21,7 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	if sess(r).User != nil {
 		owner = sess(r).User.ID
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key) VALUES($1,$2,NULLIF($3,''),$4,$5)", id, sess(r).Token, owner, svc.ID, token())
+	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true)", id, sess(r).Token, owner, svc.ID, token())
 	if err != nil {
 		a.fail(w, r, "ایجاد درخواست انجام نشد", 500)
 		return
@@ -32,7 +32,7 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 	if !a.enabled(ctx, "service", b.Service) || (b.Service != "vet" && !a.enabled(ctx, "area", b.Area)) {
 		return nil, nil
 	}
-	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND b.payment_status='paid' AND b.status NOT IN ('cancelled','cancel_requested')) ORDER BY a.day,a.start_time`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
+	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND booking_holds_capacity(b.payment_status,b.status,b.stage_deadline)) ORDER BY a.day,a.start_time`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func (a *App) bookingPage(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "درخواست پیدا نشد", 404)
 		return
 	}
-	if b.Status != "draft" {
+	if b.Status != "draft" && !(b.RequestFlow && b.Status == "awaiting_payment") {
 		redirect(w, r, "/bookings/"+b.ID)
 		return
 	}
@@ -359,6 +359,10 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "/bookings/"+b.ID)
 		return
 	}
+	if b.RequestFlow && (b.Status != "awaiting_payment" || b.StageDeadline == nil || !b.StageDeadline.After(time.Now())) {
+		a.fail(w, r, "ابتدا درخواست باید تأیید شود و مهلت پرداخت باقی باشد", 409)
+		return
+	}
 	if b.Stage != 4 || b.PaymentKey != r.FormValue("payment_key") {
 		a.fail(w, r, "رزرو آمادهٔ پرداخت نیست", 400)
 		return
@@ -387,9 +391,10 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 	}
 	var capacity int
 	var providerID, day, prd string
-	err = tx.QueryRow(ctx, "SELECT capacity,provider_id,day::text,period FROM availability WHERE id=$1 FOR UPDATE", b.AvailabilityID).Scan(&capacity, &providerID, &day, &prd)
+	var slotEnd time.Time
+	err = tx.QueryRow(ctx, "SELECT capacity,provider_id,day::text,period,(day+end_time) AT TIME ZONE 'Asia/Tehran' FROM availability WHERE id=$1 FOR UPDATE", b.AvailabilityID).Scan(&capacity, &providerID, &day, &prd, &slotEnd)
 	var used int
-	tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND payment_status='paid' AND status NOT IN ('cancelled','cancel_requested')", b.AvailabilityID).Scan(&used)
+	tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id<>$2 AND booking_holds_capacity(payment_status,status,stage_deadline)", b.AvailabilityID, b.ID).Scan(&used)
 	slots, slotErr := a.slots(ctx, b)
 	valid := false
 	for _, s := range slots {
@@ -398,6 +403,14 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	price, priceErr := a.price(ctx, b)
+	if b.RequestFlow {
+		price, priceErr = b.Amount, nil
+		valid = slotEnd.After(time.Now()) && a.enabled(ctx, "service", b.Service) && (b.Service == "vet" || a.enabled(ctx, "area", b.Area))
+		var eligible bool
+		if er := tx.QueryRow(ctx, "SELECT active AND verified AND service=$4 AND $2=ANY(species) AND (service='vet' OR $3=ANY(areas)) FROM providers WHERE id=$1", b.ProviderID, b.Species, b.Area, b.Service).Scan(&eligible); er != nil || !eligible {
+			valid = false
+		}
+	}
 	if err != nil || slotErr != nil || !valid || used >= capacity || providerID != b.ProviderID || priceErr != nil || price != b.Amount {
 		a.fail(w, r, "ظرفیت یا قیمت تغییر کرده است؛ به مرحلهٔ انتخاب بازه برگردید.", 409)
 		return
@@ -408,6 +421,9 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		var raw []byte
 		var previous PriceQuote
 		scanErr := tx.QueryRow(ctx, "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&raw)
+		if b.RequestFlow {
+			e = json.Unmarshal(raw, &q)
+		}
 		// Reject stale decomposition even when totals coincide: provider income must match the displayed quote.
 		if e != nil || scanErr != nil || len(raw) == 0 || json.Unmarshal(raw, &previous) != nil || string(mustJSON(previous)) != string(mustJSON(q)) {
 			a.fail(w, r, "تعرفه تغییر کرده است؛ بازه و خدمات را دوباره بررسی کنید.", 409)
@@ -446,9 +462,14 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status='paid',paid_at=now(),commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID)
+	_, err = tx.Exec(ctx, "UPDATE bookings SET payment_status='paid',status=CASE WHEN request_flow THEN 'accepted' ELSE 'paid' END,stage_deadline=CASE WHEN request_flow THEN NULL ELSE stage_deadline END,paid_at=now(),commission_bps=CASE WHEN request_flow THEN commission_bps ELSE COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) END WHERE id=$1", b.ID)
 	if err == nil {
-		err = addEvent(ctx, tx, b.ID, sess(r).User.ID, "paid", "پرداخت آزمایشی ثبت شد؛ درخواست در صف هماهنگی عملیات است.")
+		err = addEvent(ctx, tx, b.ID, sess(r).User.ID, "paid", func() string {
+			if b.RequestFlow {
+				return "پرداخت آزمایشی تأیید شد؛ رزرو قطعی و در کارهای متخصص ثبت شد."
+			}
+			return "پرداخت آزمایشی ثبت شد؛ درخواست در صف هماهنگی عملیات است."
+		}())
 	}
 	if err == nil {
 		err = tx.Commit(ctx)
@@ -498,6 +519,12 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 		p.Service = service(b.Service)
 	}
 	p.Providers, _ = a.providers(r.Context(), b.Service)
+	if b.RequestFlow {
+		var slot Slot
+		if a.DB.QueryRow(r.Context(), "SELECT day::text,to_char(start_time,'HH24:MI'),to_char(end_time,'HH24:MI') FROM availability WHERE id=$1", b.AvailabilityID).Scan(&slot.Day, &slot.StartTime, &slot.EndTime) == nil {
+			p.Slots = []Slot{slot}
+		}
+	}
 	rows, err := a.DB.Query(r.Context(), "SELECT event,detail,created_at FROM booking_events WHERE booking_id=$1 ORDER BY id", b.ID)
 	if err == nil {
 		defer rows.Close()
