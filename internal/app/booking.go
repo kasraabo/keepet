@@ -21,7 +21,7 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	if sess(r).User != nil {
 		owner = sess(r).User.ID
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true)", id, sess(r).Token, owner, svc.ID, token())
+	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow,fulfillment_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true,true)", id, sess(r).Token, owner, svc.ID, token())
 	if err != nil {
 		a.fail(w, r, "ایجاد درخواست انجام نشد", 500)
 		return

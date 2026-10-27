@@ -202,7 +202,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/")) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && strings.HasSuffix(r.URL.Path, "/fulfillment"))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -259,6 +259,11 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /management/booking-policy", a.approvalSettingsPage)
 	m.HandleFunc("POST /management/booking-policy", a.saveApprovalSettings)
 	m.HandleFunc("POST /management/booking-policy/providers/{id}", a.saveProviderApproval)
+	m.HandleFunc("GET /bookings/{id}/fulfillment", a.fulfillmentPage)
+	m.HandleFunc("POST /bookings/{id}/fulfillment", a.fulfillmentAction)
+	m.HandleFunc("GET /bookings/{id}/handover/{receipt}", a.handoverDownload)
+	m.HandleFunc("GET /management/fulfillment", a.fulfillmentSettingsPage)
+	m.HandleFunc("POST /management/fulfillment", a.saveFulfillmentSettings)
 	m.HandleFunc("GET /wallet", a.walletPage)
 	m.HandleFunc("GET /wallet/export.csv", a.walletCSV)
 	m.HandleFunc("POST /wallet/bank", a.walletBankSave)
@@ -496,11 +501,11 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	return ps, rows.Err()
 }
 
-const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason,time_flow,COALESCE(duration_minutes,0)"
+const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason,time_flow,COALESCE(duration_minutes,0),fulfillment_flow,attendance_verified_at,settlement_approved_at,fulfillment_disputed"
 
 func scanBooking(row pgx.Row) (Booking, error) {
 	var b Booking
-	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason, &b.TimeFlow, &b.DurationMinutes)
+	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason, &b.TimeFlow, &b.DurationMinutes, &b.FulfillmentFlow, &b.AttendanceVerifiedAt, &b.SettlementApprovedAt, &b.FulfillmentDisputed)
 	return b, err
 }
 func (a *App) getBooking(r *http.Request) (Booking, error) {

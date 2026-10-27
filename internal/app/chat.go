@@ -135,7 +135,7 @@ func (a *App) lockedChat(ctx context.Context, tx pgx.Tx, id string, u *User) (ch
 			c.CloseReason = reason
 		}
 	}
-	if c.ClosedAt != nil && c.Status == "in_progress" {
+	if c.ClosedAt != nil && contains([]string{"in_progress", "awaiting_report"}, c.Status) {
 		var done bool
 		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM consultation_vet_forms WHERE chat_id=$1)", id).Scan(&done)
 		if e != nil {
@@ -146,12 +146,26 @@ func (a *App) lockedChat(ctx context.Context, tx pgx.Tx, id string, u *User) (ch
 				return c, "", e
 			}
 			c.Status = "completed"
+		} else if c.Status == "in_progress" {
+			var modern bool
+			if err := tx.QueryRow(ctx, "SELECT fulfillment_flow FROM bookings WHERE id=$1", c.BookingID).Scan(&modern); err != nil {
+				return c, "", err
+			}
+			if modern {
+				if _, err := tx.Exec(ctx, "UPDATE bookings SET status='awaiting_report' WHERE id=$1", c.BookingID); err != nil {
+					return c, "", err
+				}
+				if err := addEvent(ctx, tx, c.BookingID, c.VetID, "awaiting_report", "زمان گفتگو پایان یافت؛ پزشک در حال تکمیل گزارش و تجویز است."); err != nil {
+					return c, "", err
+				}
+				c.Status = "awaiting_report"
+			}
 		}
 	}
 	return c, role, nil
 }
 func completeConsultation(ctx context.Context, tx pgx.Tx, c chatRecord) error {
-	tag, e := tx.Exec(ctx, `UPDATE bookings SET status='completed',prescription=(SELECT 'علائم: '||symptoms||E'\nتشخیص: '||diagnosis||E'\nتجویز و توصیه: '||prescription FROM consultation_vet_forms WHERE chat_id=$2) WHERE id=$1 AND status='in_progress' AND EXISTS(SELECT 1 FROM consultation_vet_forms WHERE chat_id=$2)`, c.BookingID, c.ID)
+	tag, e := tx.Exec(ctx, `UPDATE bookings SET status='completed',prescription=(SELECT 'علائم: '||symptoms||E'\nتشخیص: '||diagnosis||E'\nتجویز و توصیه: '||prescription FROM consultation_vet_forms WHERE chat_id=$2) WHERE id=$1 AND status IN ('in_progress','awaiting_report') AND EXISTS(SELECT 1 FROM consultation_vet_forms WHERE chat_id=$2)`, c.BookingID, c.ID)
 	if e == nil && tag.RowsAffected() > 0 {
 		e = addEvent(ctx, tx, c.BookingID, c.VetID, "completed", "ویزیت آنلاین با ثبت علائم، تشخیص و تجویز تکمیل شد؛ گفتگو در پرونده آرشیو شد.")
 	}

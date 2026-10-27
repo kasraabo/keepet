@@ -237,7 +237,7 @@ func (a *App) submitRequest(w http.ResponseWriter, r *http.Request) {
 		state = "pending_ops"
 		minutes = config["ops_minutes"]
 	}
-	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,submitted_at=now(),requires_ops_approval=$3,approval_policy=$4,stage_deadline=CASE WHEN time_flow THEN LEAST(exact_time,now()+$5*interval '1 minute') ELSE now()+$5*interval '1 minute' END,provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE NULL END,provider_due=$6,commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID, state, need, policy, minutes, q.Base)
+	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,completion_hours=(SELECT completion_hours FROM fulfillment_settings WHERE id=1),submitted_at=now(),requires_ops_approval=$3,approval_policy=$4,stage_deadline=CASE WHEN time_flow THEN LEAST(exact_time,now()+$5*interval '1 minute') ELSE now()+$5*interval '1 minute' END,provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE NULL END,provider_due=$6,commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID, state, need, policy, minutes, q.Base)
 	if e == nil {
 		e = requestEvent(ctx, tx, b, sess(r).User.ID, state, "درخواست ثبت شد؛ پرداخت پس از تأیید متخصص انجام می‌شود.")
 	}
@@ -280,7 +280,7 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "retry" && own && contains([]string{"request_rejected", "request_expired", "request_cancelled"}, b.Status) {
 		id := token()
-		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
+		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow,fulfillment_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true,true FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
 		if e == nil {
 			e = tx.Commit(ctx)
 		}

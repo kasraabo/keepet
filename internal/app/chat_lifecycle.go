@@ -25,6 +25,9 @@ func (a *App) startChatMaintenance() {
 				if err := a.reconcileRequests(work); err != nil && ctx.Err() == nil {
 					log.Printf("request maintenance: %v", err)
 				}
+				if err := a.reconcileFulfillments(work); err != nil && ctx.Err() == nil {
+					log.Printf("service completion: %v", err)
+				}
 				if err := a.reconcileChats(work); err != nil && ctx.Err() == nil {
 					log.Printf("consultation expiry: %v", err)
 				}
@@ -35,7 +38,7 @@ func (a *App) startChatMaintenance() {
 }
 
 func (a *App) reconcileChats(ctx context.Context) error {
-	rows, err := a.DB.Query(ctx, `SELECT c.id FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id WHERE (c.closed_at IS NULL AND (c.expires_at<=now() OR b.status NOT IN ('in_progress','completed'))) OR (c.closed_at IS NOT NULL AND b.status='in_progress' AND EXISTS(SELECT 1 FROM consultation_vet_forms WHERE chat_id=c.id)) ORDER BY c.booking_id LIMIT 100`)
+	rows, err := a.DB.Query(ctx, `SELECT c.id FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id WHERE (c.closed_at IS NULL AND (c.expires_at<=now() OR b.status NOT IN ('in_progress','completed'))) OR (c.closed_at IS NOT NULL AND b.status IN ('in_progress','awaiting_report') AND EXISTS(SELECT 1 FROM consultation_vet_forms WHERE chat_id=c.id)) ORDER BY c.booking_id LIMIT 100`)
 	if err != nil {
 		return err
 	}

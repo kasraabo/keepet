@@ -61,10 +61,16 @@ mkdir -p "$backup/app-secrets"
 docker cp "$app_id:/var/lib/keepet/." "$backup/app-secrets/"
 encrypted_count=$(docker compose exec -T db psql -U keepet -d keepet -Atqc \
   'SELECT count(*) FROM platform_integrations WHERE secret IS NOT NULL;')
+# This table is absent on releases before service attendance was added.
+arrival_table=$(docker compose exec -T db psql -U keepet -d keepet -Atqc "SELECT to_regclass('public.arrival_challenges') IS NOT NULL;")
+if [ "$arrival_table" = t ]; then
+  arrival_count=$(docker compose exec -T db psql -U keepet -d keepet -Atqc 'SELECT count(*) FROM arrival_challenges;')
+  encrypted_count=$((encrypted_count + arrival_count))
+fi
 if [ "$encrypted_count" -gt 0 ]; then
   test -s "$backup/app-secrets/settings.key"
 fi
-# A new trial installation creates this key only when a credential is saved.
+# The key is created lazily for encrypted credentials or arrival codes.
 if [ -f "$backup/app-secrets/settings.key" ]; then
   chmod 600 "$backup/app-secrets/settings.key"
 fi

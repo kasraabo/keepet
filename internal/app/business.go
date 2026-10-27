@@ -43,7 +43,7 @@ type BusinessMetric struct {
 type BusinessMoney struct {
 	ID, Provider, Service, Status, Reference string
 	Amount, Fee, Due                         int64
-	Settled                                  bool
+	Settled, Ready                           bool
 }
 type BusinessAudit struct {
 	Actor, Kind, Target, Before, After string
@@ -268,14 +268,14 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 			b.TriageRevision = v.Revision
 		}
 	}
-	e = a.DB.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status='draft'),count(*) FILTER(WHERE paid_at IS NOT NULL),count(*) FILTER(WHERE status IN ('completed','result_ready')),count(*) FILTER(WHERE status IN ('paid','confirmed','replacement_pending','cancel_requested','pending_ops','pending_provider','awaiting_payment')),COALESCE(sum(amount) FILTER(WHERE paid_at IS NOT NULL),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0) FROM bookings`).Scan(&b.Drafts, &b.Paid, &b.Completed, &b.Pending, &b.Gross, &b.Refund)
+	e = a.DB.QueryRow(ctx, `SELECT count(*) FILTER(WHERE status='draft'),count(*) FILTER(WHERE paid_at IS NOT NULL),count(*) FILTER(WHERE booking_settlement_ready(bookings)),count(*) FILTER(WHERE status IN ('paid','confirmed','replacement_pending','cancel_requested','pending_ops','pending_provider','awaiting_payment')),COALESCE(sum(amount) FILTER(WHERE paid_at IS NOT NULL),0),COALESCE(sum(refund_amount) FILTER(WHERE refund_status='refunded'),0) FROM bookings`).Scan(&b.Drafts, &b.Paid, &b.Completed, &b.Pending, &b.Gross, &b.Refund)
 	if e != nil {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
 	}
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM users WHERE role='owner'").Scan(&b.Owners)
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM providers WHERE active AND verified").Scan(&b.ActiveProviders)
-	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE status IN ('completed','result_ready')),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
+	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE booking_settlement_ready(bookings)),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
 	if e != nil {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
@@ -295,18 +295,18 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
 	}
-	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(b.provider_due,b.amount-b.amount*b.commission_bps/10000),x.booking_id IS NOT NULL,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
+	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(b.provider_due,b.amount-b.amount*b.commission_bps/10000),x.booking_id IS NOT NULL,COALESCE(x.reference,''),booking_settlement_ready(b) FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
 	if e != nil {
 		a.fail(w, r, "خواندن مالی ناموفق بود", 500)
 		return
 	}
 	for rows.Next() {
 		var v BusinessMoney
-		if e = rows.Scan(&v.ID, &v.Provider, &v.Service, &v.Status, &v.Amount, &v.Fee, &v.Due, &v.Settled, &v.Reference); e != nil {
+		if e = rows.Scan(&v.ID, &v.Provider, &v.Service, &v.Status, &v.Amount, &v.Fee, &v.Due, &v.Settled, &v.Reference, &v.Ready); e != nil {
 			break
 		}
 		b.Money = append(b.Money, v)
-		if contains([]string{"completed", "result_ready"}, v.Status) {
+		if v.Ready {
 			b.Fees += v.Fee
 			if v.Settled {
 				b.Settled += v.Due

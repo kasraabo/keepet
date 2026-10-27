@@ -169,7 +169,7 @@ func (a *App) referralsPage(w http.ResponseWriter, r *http.Request) {
 		query = v.Query
 	}
 	rows, e := a.DB.Query(ctx, `SELECT r.invitee_id,r.referrer_id,u.name,CASE WHEN $1='' THEN u.phone ELSE '' END,u.role,COALESCE(p.service,''),parent.name,r.code,r.enabled,r.revision,r.created_at,
- (SELECT count(*) FROM bookings b WHERE b.payment_status='paid' AND b.status IN ('completed','result_ready') AND ((p.id IS NOT NULL AND b.provider_id=p.id) OR (p.id IS NULL AND b.owner_id=u.id))),
+ (SELECT count(*) FROM bookings b WHERE b.payment_status='paid' AND booking_settlement_ready(b) AND ((p.id IS NOT NULL AND b.provider_id=p.id) OR (p.id IS NULL AND b.owner_id=u.id))),
  COALESCE((SELECT sum(credited-adjusted) FROM referral_order_awards a WHERE a.provider_user_id=u.id AND a.referrer_id=r.referrer_id),0),r.referrer_bonus,r.invitee_bonus
  FROM referrals r JOIN users u ON u.id=r.invitee_id JOIN users parent ON parent.id=r.referrer_id LEFT JOIN providers p ON p.user_id=u.id
  WHERE ($1='' OR r.referrer_id=$1) AND ($2='' OR u.phone=$2 OR r.code ILIKE '%'||$2||'%' OR u.name ILIKE '%'||$2||'%' OR parent.name ILIKE '%'||$2||'%')

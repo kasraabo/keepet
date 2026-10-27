@@ -131,6 +131,10 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		event = "cancelled"
 		detail = "عودت " + money(b.RefundAmount) + " تومان به کیف پول ثبت شد؛ بخش هدیه به اعتبار هدیه برگشت و انتقال بانکی انجام نشده است."
 	case "platform_cancel":
+		if b.FulfillmentFlow && b.SettlementApprovedAt != nil {
+			a.fail(w, r, "این خدمت تسویه شده است؛ برای بازگشت وجه بررسی مالی لازم است", 409)
+			return
+		}
 		if contains([]string{"draft", "cancelled", "completed", "result_ready", "cancel_requested"}, b.Status) {
 			a.fail(w, r, "این رزرو قابل لغو از این مسیر نیست", 409)
 			return
@@ -222,7 +226,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return
 		}
-		p.Bookings, err = a.bookings(r.Context(), "provider_id=$1 AND status IN ('pending_provider','awaiting_payment','assigned','accepted','in_progress','collected','delivered','completed','result_ready')", providerID)
+		p.Bookings, err = a.bookings(r.Context(), "provider_id=$1 AND status IN ('pending_provider','awaiting_payment','assigned','accepted','in_progress','awaiting_customer','delivery_pending','awaiting_report','collected','delivered','completed','result_ready')", providerID)
 		if err != nil {
 			a.fail(w, r, "سفارش‌ها بارگذاری نشدند؛ صفحه را تازه کنید", 500)
 			return
@@ -275,6 +279,10 @@ func (a *App) providerAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil || userID != sess(r).User.ID {
 		a.fail(w, r, "به این کار دسترسی ندارید", 404)
+		return
+	}
+	if b.FulfillmentFlow && b.Service != "vet" && b.PaymentStatus == "paid" {
+		a.fail(w, r, "برای حضور و انجام خدمت، از صفحهٔ پیگیری همین سفارش استفاده کنید", 409)
 		return
 	}
 	action := r.FormValue("action")
