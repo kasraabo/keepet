@@ -26,3 +26,4 @@ body{font-family:KeepetDigits,Vazirmatn,sans-serif}input,select,textarea,button{
 .calendar-grid button.today{box-shadow:inset 0 0 0 2px #bc8055;font-weight:700}.calendar-grid button.today::after{content:"•";display:block;line-height:.5;font-size:10px}
 
 #exact-time-picker .slot-grid>.alert{grid-column:1/-1}#exact-time-picker a[hx-get]{margin:3px}
+.notification-link{display:inline-grid;place-items:center;position:relative;min-width:30px;height:38px;color:var(--green,#174638);flex-shrink:0}.notification-link [data-notification-count]{position:absolute;top:-3px;right:-5px;background:#b44545;color:white;border-radius:20px;min-width:18px;padding:0 4px;font-size:11px;text-align:center}.notification-link [hidden]{display:none}

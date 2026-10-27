@@ -105,7 +105,7 @@ const assert = (test, message) => { if (!test) throw Error(message); };
   await vet.page.screenshot({path:'/tmp/keepet-chat-vet-form.png',fullPage:true});
   await vet.page.locator('.chat-questionnaire-form button[type=submit]').click();await vet.page.waitForURL(/\/chats\/[^/]+\?notice=/);
   assert(sql(`SELECT status FROM bookings WHERE id='${bid}'`)==='completed','clinical form completes visit');
-  await owner.page.reload();assert(await owner.page.locator('[data-chat-send]').isDisabled(),'archive read only');assert(!(await owner.page.content()).includes('یادداشت خصوصی دربارهٔ مشتری'),'vet optional feedback private');
+  await owner.page.goto(base+'/chats/'+cid);assert(await owner.page.locator('[data-chat-send]').isDisabled(),'archive read only');assert(!(await owner.page.content()).includes('یادداشت خصوصی دربارهٔ مشتری'),'vet optional feedback private');
   await admin.page.reload();assert((await admin.page.content()).includes('یادداشت خصوصی دربارهٔ مشتری'),'management sees private clinical opinion');
   for(const actor of [owner,vet,admin]){await actor.page.goto(base+(actor===admin?'/management/chats':'/chats'));assert(await actor.page.locator(`.chat-entry a[href$="${cid}"]`).count()>0,'archive in each record');}
   await owner.context.storageState({path:'/tmp/keepet-chat-smoke-state.json'});fs.writeFileSync('/tmp/keepet-chat-smoke-media.json',JSON.stringify({audioURL,cid,bid}));

@@ -269,6 +269,10 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /bookings/{id}/fulfillment", a.fulfillmentPage)
 	m.HandleFunc("POST /bookings/{id}/fulfillment", a.fulfillmentAction)
 	m.HandleFunc("GET /bookings/{id}/handover/{receipt}", a.handoverDownload)
+	m.HandleFunc("GET /notifications", a.notificationsPage)
+	m.HandleFunc("GET /notifications/count", a.notificationsCount)
+	m.HandleFunc("POST /notifications/{id}/read", a.notificationRead)
+	m.HandleFunc("POST /chats/{id}/read", a.chatRead)
 	m.HandleFunc("GET /management/laboratories", a.labManagement)
 	m.HandleFunc("POST /management/laboratories/catalog", a.saveLabCatalog)
 	m.HandleFunc("POST /management/laboratories/payments/{id}", a.recordLabPayment)
@@ -408,6 +412,7 @@ func (a *App) page(r *http.Request, title string) Page {
 	s := sess(r)
 	policy := a.otpPolicy(r.Context())
 	p := Page{OTPResend: policy.Resend, IsManagement: strings.HasPrefix(r.URL.Path, "/management"), CodeDigits: policy.Digits, CodeTTL: policy.TTL, Questions: a.questions(r.Context()), Title: title, Path: r.URL.Path, CSRF: s.CSRF, User: s.User, Services: Services, Areas: Areas, Menu: GroomMenu, Samples: Samples, Notice: r.URL.Query().Get("notice")}
+	p.UnreadNotifications = a.notificationCount(r)
 	a.livePage(r.Context(), &p)
 	a.applySEO(r, &p)
 	return p

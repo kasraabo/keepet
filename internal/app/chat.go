@@ -27,6 +27,7 @@ type ChatMessage struct {
 	Mime         string    `json:"mime"`
 	Filename     string    `json:"filename"`
 	Own          bool      `json:"own"`
+	Unread       bool      `json:"unread"`
 }
 type VetQuestionnaire struct {
 	Symptoms, Diagnosis, Prescription, CustomerFeedback string
@@ -39,11 +40,19 @@ type CustomerQuestionnaire struct {
 	At                             time.Time
 }
 type ChatSummary struct {
+	Kind   string
+	Unread int
+
 	ID, BookingID, PetName, OtherName, State, Role string
 	StartedAt, ExpiresAt, ArchivedAt               *time.Time
 	QuestionnaireDone                              bool
 }
 type ChatView struct {
+	BookingStatus string
+	Events        []Event
+
+	Kind string
+
 	ID, BookingID, PetName, OwnerName, VetName, Role, State, BackURL string
 	StartedAt, ExpiresAt, ArchivedAt                                 *time.Time
 	Messages                                                         []ChatMessage
@@ -53,6 +62,8 @@ type ChatView struct {
 	DurationMinutes                                                  int
 }
 type chatRecord struct {
+	Kind string
+
 	ID, BookingID, OwnerID, VetID, Status, ProviderID, OwnerName, VetName, PetName, CloseReason string
 	StartedAt, ExpiresAt                                                                        time.Time
 	ClosedAt                                                                                    *time.Time
@@ -106,7 +117,7 @@ func (a *App) lockedChat(ctx context.Context, tx pgx.Tx, id string, u *User) (ch
 		return c, "", e
 	}
 	c.BookingID = bookingID
-	e = tx.QueryRow(ctx, `SELECT c.id,c.owner_id,c.vet_id,c.started_at,c.expires_at,c.closed_at,c.duration_minutes,c.close_reason,o.name,v.name FROM consultation_chats c JOIN users o ON o.id=c.owner_id JOIN users v ON v.id=c.vet_id WHERE c.id=$1 FOR UPDATE OF c`, id).Scan(&c.ID, &c.OwnerID, &c.VetID, &c.StartedAt, &c.ExpiresAt, &c.ClosedAt, &c.DurationMinutes, &c.CloseReason, &c.OwnerName, &c.VetName)
+	e = tx.QueryRow(ctx, `SELECT c.id,c.owner_id,c.vet_id,c.started_at,COALESCE(c.expires_at,'9999-12-31 UTC'::timestamptz),c.closed_at,COALESCE(c.duration_minutes,0),c.close_reason,c.kind,o.name,v.name FROM consultation_chats c JOIN users o ON o.id=c.owner_id JOIN users v ON v.id=c.vet_id WHERE c.id=$1 FOR UPDATE OF c`, id).Scan(&c.ID, &c.OwnerID, &c.VetID, &c.StartedAt, &c.ExpiresAt, &c.ClosedAt, &c.DurationMinutes, &c.CloseReason, &c.Kind, &c.OwnerName, &c.VetName)
 	if e != nil {
 		return c, "", e
 	}
@@ -115,6 +126,22 @@ func (a *App) lockedChat(ctx context.Context, tx pgx.Tx, id string, u *User) (ch
 		role = "owner"
 	} else if u.ID == c.VetID {
 		role = "vet"
+		if c.Kind != "vet" {
+			role = "provider"
+		}
+	}
+	if c.Kind != "vet" {
+		var open bool
+		if e = tx.QueryRow(ctx, "SELECT chat_is_open(c,b) FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id WHERE c.id=$1", c.ID).Scan(&open); e != nil {
+			return c, "", e
+		}
+		if !open && c.ClosedAt == nil {
+			if _, e = tx.Exec(ctx, "UPDATE consultation_chats SET closed_at=now(),close_reason='service_finished' WHERE id=$1", c.ID); e != nil {
+				return c, "", e
+			}
+			c.ClosedAt = ptrTime(time.Now())
+		}
+		return c, role, nil
 	}
 	if c.ClosedAt == nil {
 		reason := ""
@@ -155,7 +182,7 @@ func (a *App) lockedChat(ctx context.Context, tx pgx.Tx, id string, u *User) (ch
 				if _, err := tx.Exec(ctx, "UPDATE bookings SET status='awaiting_report' WHERE id=$1", c.BookingID); err != nil {
 					return c, "", err
 				}
-				if err := addEvent(ctx, tx, c.BookingID, c.VetID, "awaiting_report", "زمان گفتگو پایان یافت؛ پزشک در حال تکمیل گزارش و تجویز است."); err != nil {
+				if err := addEvent(ctx, tx, c.BookingID, "", "awaiting_report", "زمان گفتگو پایان یافت؛ پزشک در حال تکمیل گزارش و تجویز است."); err != nil {
 					return c, "", err
 				}
 				c.Status = "awaiting_report"
@@ -185,14 +212,40 @@ func (a *App) loadChat(r *http.Request, id string) (*ChatView, error) {
 	if e = tx.Commit(ctx); e != nil {
 		return nil, e
 	}
-	v := &ChatView{ID: c.ID, BookingID: c.BookingID, PetName: c.PetName, OwnerName: c.OwnerName, VetName: c.VetName, Role: role, State: "active", StartedAt: &c.StartedAt, ExpiresAt: &c.ExpiresAt, ArchivedAt: c.ClosedAt, DurationMinutes: c.DurationMinutes, IsParticipant: role != "admin", BackURL: "/chats"}
+	v := &ChatView{BookingStatus: c.Status, Kind: c.Kind, ID: c.ID, BookingID: c.BookingID, PetName: c.PetName, OwnerName: c.OwnerName, VetName: c.VetName, Role: role, State: "active", StartedAt: &c.StartedAt, ExpiresAt: &c.ExpiresAt, ArchivedAt: c.ClosedAt, DurationMinutes: c.DurationMinutes, IsParticipant: role != "admin", BackURL: "/chats"}
 	if c.ClosedAt != nil {
 		v.State = "archived"
 	}
 	v.CanSend = v.IsParticipant && v.State == "active"
-	v.CanEnd = role != "owner" && v.State == "active"
+	v.CanEnd = role != "owner" && v.State == "active" && c.Kind == "vet"
 	if role == "admin" {
 		v.BackURL = "/management/chats"
+	}
+	if c.Kind != "vet" {
+		v.ExpiresAt = nil
+		v.QuestionnaireDone = true
+		rows, err := a.DB.Query(ctx, "SELECT event,created_at FROM booking_events WHERE booking_id=$1 ORDER BY id DESC LIMIT 12", c.BookingID)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ev Event
+			if err = rows.Scan(&ev.Event, &ev.At); err != nil {
+				break
+			}
+			if status(ev.Event) != ev.Event {
+				v.Events = append(v.Events, ev)
+			}
+		}
+		if err == nil {
+			err = rows.Err()
+		}
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+		v.Messages, e = a.chatMessages(ctx, id, sess(r).User.ID)
+		return v, e
 	}
 	// Optional vet opinion is removed at the backend boundary for the customer.
 	var f VetQuestionnaire
@@ -226,7 +279,7 @@ func (a *App) loadChat(r *http.Request, id string) (*ChatView, error) {
 	return v, e
 }
 func (a *App) chatMessages(ctx context.Context, id, user string) ([]ChatMessage, error) {
-	rows, e := a.DB.Query(ctx, `SELECT m.id::text,m.sender_id,u.name,CASE WHEN m.sender_id=c.vet_id THEN 'vet' ELSE 'owner' END,m.body,m.kind,m.created_at,COALESCE(f.id,''),COALESCE(f.mime,''),COALESCE(f.filename,'') FROM consultation_messages m JOIN users u ON u.id=m.sender_id JOIN consultation_chats c ON c.id=m.chat_id LEFT JOIN consultation_attachments f ON f.message_id=m.id WHERE m.chat_id=$1 ORDER BY m.id`, id)
+	rows, e := a.DB.Query(ctx, `SELECT m.id::text,m.sender_id,u.name,CASE WHEN m.sender_id=c.vet_id THEN CASE WHEN c.kind='vet' THEN 'vet' ELSE 'provider' END ELSE 'owner' END,m.body,m.kind,m.created_at,COALESCE(f.id,''),COALESCE(f.mime,''),COALESCE(f.filename,''),($2 IN (c.owner_id,c.vet_id) AND m.sender_id<>$2 AND m.id>COALESCE((SELECT last_message_id FROM chat_reads WHERE chat_id=c.id AND user_id=$2),0)) FROM consultation_messages m JOIN users u ON u.id=m.sender_id JOIN consultation_chats c ON c.id=m.chat_id LEFT JOIN consultation_attachments f ON f.message_id=m.id WHERE m.chat_id=$1 ORDER BY m.id`, id, user)
 	if e != nil {
 		return nil, e
 	}
@@ -234,7 +287,7 @@ func (a *App) chatMessages(ctx context.Context, id, user string) ([]ChatMessage,
 	out := []ChatMessage{}
 	for rows.Next() {
 		var m ChatMessage
-		if e = rows.Scan(&m.ID, &m.SenderID, &m.SenderName, &m.Role, &m.Body, &m.Kind, &m.At, &m.AttachmentID, &m.Mime, &m.Filename); e != nil {
+		if e = rows.Scan(&m.ID, &m.SenderID, &m.SenderName, &m.Role, &m.Body, &m.Kind, &m.At, &m.AttachmentID, &m.Mime, &m.Filename, &m.Unread); e != nil {
 			return nil, e
 		}
 		m.Own = m.SenderID == user
@@ -264,7 +317,7 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 		a.chatFailure(w, r, "گفتگو پیدا نشد یا دسترسی ندارید", 404)
 		return
 	}
-	p := a.page(r, "گفتگوی ویزیت · "+v.PetName)
+	p := a.page(r, "گفت‌وگو · "+v.PetName)
 	p.Chat = v
 	a.chatForms(r, &p)
 	a.render(w, r, "chat", p)
@@ -320,12 +373,12 @@ func (a *App) chatSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if c.ClosedAt != nil {
 		tx.Commit(ctx)
-		a.chatFailure(w, r, "زمان گفتگو پایان یافته؛ فرم پایان ویزیت را تکمیل کنید", 409)
+		a.chatFailure(w, r, "گفتگو بایگانی شده است؛ پیام‌های قبلی در پرونده محفوظ‌اند", 409)
 		return
 	}
-	if role == "vet" {
+	if role == "vet" || role == "provider" {
 		var active bool
-		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM providers WHERE user_id=$1 AND service='vet' AND active AND verified)", c.VetID).Scan(&active)
+		e = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM providers WHERE user_id=$1 AND service=$2 AND active AND verified)", c.VetID, c.Kind).Scan(&active)
 		if e != nil || !active {
 			a.chatFailure(w, r, "حساب دامپزشک در دسترس نیست", 403)
 			return
@@ -350,13 +403,13 @@ func (a *App) chatSend(w http.ResponseWriter, r *http.Request) {
 		kind = upload.Kind
 	}
 	var msgID int64
-	e = tx.QueryRow(ctx, "INSERT INTO consultation_messages(chat_id,sender_id,body,kind,created_at) SELECT $1,$2,$3,$4,clock_timestamp() WHERE EXISTS(SELECT 1 FROM consultation_chats WHERE id=$1 AND closed_at IS NULL AND expires_at>clock_timestamp()) RETURNING id", id, sess(r).User.ID, text, kind).Scan(&msgID)
+	e = tx.QueryRow(ctx, "INSERT INTO consultation_messages(chat_id,sender_id,body,kind,created_at) SELECT $1,$2,$3,$4,clock_timestamp() WHERE EXISTS(SELECT 1 FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id WHERE c.id=$1 AND chat_is_open(c,b) AND (c.kind<>'vet' OR c.expires_at>clock_timestamp())) RETURNING id", id, sess(r).User.ID, text, kind).Scan(&msgID)
 	if e == pgx.ErrNoRows {
 		// The deadline may pass during validation; never insert a late message.
 		if _, _, syncErr := a.lockedChat(ctx, tx, id, sess(r).User); syncErr == nil {
 			tx.Commit(ctx)
 		}
-		a.chatFailure(w, r, "زمان گفتگو پایان یافته؛ فرم پایان ویزیت را تکمیل کنید", 409)
+		a.chatFailure(w, r, "گفتگو بایگانی شده است؛ پیام‌های قبلی در پرونده محفوظ‌اند", 409)
 		return
 	}
 	if e == nil && upload != nil {
@@ -389,6 +442,10 @@ func (a *App) chatEnd(w http.ResponseWriter, r *http.Request) {
 	c, role, e := a.lockedChat(ctx, tx, r.PathValue("id"), sess(r).User)
 	if e != nil {
 		a.fail(w, r, "گفتگو در دسترس نیست", 404)
+		return
+	}
+	if c.Kind != "vet" {
+		a.fail(w, r, "این کنترل مخصوص ویزیت پزشک است", 409)
 		return
 	}
 	if role == "owner" {
@@ -429,6 +486,10 @@ func (a *App) chatQuestionnairePage(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "این فرم مخصوص شرکت‌کنندگان گفتگو است", 403)
 		return
 	}
+	if v.Kind != "vet" {
+		a.fail(w, r, "پرسشنامهٔ پزشکی برای این خدمت وجود ندارد", 409)
+		return
+	}
 	p := a.page(r, "فرم پایان ویزیت")
 	p.Chat = v
 	a.chatForms(r, &p)
@@ -448,6 +509,10 @@ func (a *App) chatQuestionnaire(w http.ResponseWriter, r *http.Request) {
 	c, role, e := a.lockedChat(ctx, tx, r.PathValue("id"), sess(r).User)
 	if e != nil {
 		a.fail(w, r, "گفتگو در دسترس نیست", 404)
+		return
+	}
+	if c.Kind != "vet" {
+		a.fail(w, r, "پرسشنامهٔ پزشکی برای این خدمت وجود ندارد", 409)
 		return
 	}
 	if role == "admin" {
@@ -570,7 +635,7 @@ func (a *App) chatSummaries(r *http.Request, booking string) ([]ChatSummary, err
 	if u == nil {
 		return nil, nil
 	}
-	rows, e := a.DB.Query(r.Context(), `SELECT c.id,c.booking_id,b.pet_name,CASE WHEN c.owner_id=$1 THEN v.name ELSE o.name END,CASE WHEN c.closed_at IS NOT NULL OR c.expires_at<=now() OR b.status NOT IN ('in_progress','completed') THEN 'archived' ELSE 'active' END,CASE WHEN c.owner_id=$1 THEN 'owner' WHEN c.vet_id=$1 THEN 'vet' ELSE 'admin' END,c.started_at,c.expires_at,CASE WHEN c.closed_at IS NOT NULL THEN c.closed_at WHEN c.expires_at<=now() THEN c.expires_at ELSE NULL END,CASE WHEN c.owner_id=$1 THEN EXISTS(SELECT 1 FROM consultation_customer_forms f WHERE f.chat_id=c.id) WHEN c.vet_id=$1 THEN EXISTS(SELECT 1 FROM consultation_vet_forms f WHERE f.chat_id=c.id) ELSE true END FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id JOIN users o ON o.id=c.owner_id JOIN users v ON v.id=c.vet_id WHERE (c.owner_id=$1 OR c.vet_id=$1 OR $2 IN ('admin','ops')) AND ($3='' OR c.booking_id=$3) ORDER BY c.started_at DESC LIMIT 200`, u.ID, u.Role, booking)
+	rows, e := a.DB.Query(r.Context(), `SELECT c.id,c.booking_id,b.pet_name,CASE WHEN c.owner_id=$1 THEN v.name ELSE o.name END,CASE WHEN chat_is_open(c,b) THEN 'active' ELSE 'archived' END,CASE WHEN c.owner_id=$1 THEN 'owner' WHEN c.vet_id=$1 THEN CASE WHEN c.kind='vet' THEN 'vet' ELSE 'provider' END ELSE 'admin' END,c.started_at,c.expires_at,CASE WHEN c.closed_at IS NOT NULL THEN c.closed_at WHEN c.expires_at<=now() THEN c.expires_at ELSE NULL END,CASE WHEN c.kind<>'vet' THEN true WHEN c.owner_id=$1 THEN EXISTS(SELECT 1 FROM consultation_customer_forms f WHERE f.chat_id=c.id) WHEN c.vet_id=$1 THEN EXISTS(SELECT 1 FROM consultation_vet_forms f WHERE f.chat_id=c.id) ELSE true END,c.kind,CASE WHEN $1 IN (c.owner_id,c.vet_id) THEN (SELECT count(*) FROM consultation_messages m WHERE m.chat_id=c.id AND m.sender_id<>$1 AND m.id>COALESCE((SELECT last_message_id FROM chat_reads WHERE chat_id=c.id AND user_id=$1),0)) ELSE 0 END FROM consultation_chats c JOIN bookings b ON b.id=c.booking_id JOIN users o ON o.id=c.owner_id JOIN users v ON v.id=c.vet_id WHERE (c.owner_id=$1 OR c.vet_id=$1 OR $2 IN ('admin','ops')) AND ($3='' OR c.booking_id=$3) ORDER BY c.started_at DESC LIMIT 200`, u.ID, u.Role, booking)
 	if e != nil {
 		return nil, e
 	}
@@ -578,7 +643,7 @@ func (a *App) chatSummaries(r *http.Request, booking string) ([]ChatSummary, err
 	out := []ChatSummary{}
 	for rows.Next() {
 		var c ChatSummary
-		if e = rows.Scan(&c.ID, &c.BookingID, &c.PetName, &c.OtherName, &c.State, &c.Role, &c.StartedAt, &c.ExpiresAt, &c.ArchivedAt, &c.QuestionnaireDone); e != nil {
+		if e = rows.Scan(&c.ID, &c.BookingID, &c.PetName, &c.OtherName, &c.State, &c.Role, &c.StartedAt, &c.ExpiresAt, &c.ArchivedAt, &c.QuestionnaireDone, &c.Kind, &c.Unread); e != nil {
 			return nil, e
 		}
 		out = append(out, c)
@@ -620,6 +685,10 @@ func (a *App) changeChatDuration(w http.ResponseWriter, r *http.Request) {
 	c, _, e := a.lockedChat(ctx, tx, r.PathValue("id"), sess(r).User)
 	if e != nil {
 		a.fail(w, r, "گفتگو در دسترس نیست", 404)
+		return
+	}
+	if c.Kind != "vet" {
+		a.fail(w, r, "مدت ویزیت برای چت هماهنگی تنظیم نمی‌شود", 409)
 		return
 	}
 	if c.ClosedAt != nil {

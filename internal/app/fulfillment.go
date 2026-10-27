@@ -169,6 +169,11 @@ func (a *App) fulfillmentPage(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "رسید بارگذاری نشد", 500)
 		return
 	}
+	p.Chats, e = a.chatSummaries(r, b.ID)
+	if e != nil {
+		a.fail(w, r, "گفتگو بارگذاری نشد", 500)
+		return
+	}
 	a.render(w, r, "fulfillment", p)
 }
 func (a *App) fulfillmentAction(w http.ResponseWriter, r *http.Request) {

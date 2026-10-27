@@ -46,6 +46,7 @@
     if (root.dataset.chatBound) return;
     root.dataset.chatBound = 'true';
     const id = root.dataset.chatId;
+ const medical = root.dataset.chatKind === 'vet';
     const list = root.querySelector('[data-chat-messages]');
     const form = root.querySelector('[data-chat-composer]');
     const text = root.querySelector('[data-chat-text]');
@@ -88,6 +89,14 @@
     const messagesURL = '/chats/' + encodeURIComponent(id) + '/messages';
     const questionnaireURL = '/chats/' + encodeURIComponent(id) + '/questionnaire';
 
+let acked='0', acknowledging=false;
+ async function acknowledge(){
+ if(!participant||document.hidden||!atBottom()||acknowledging||disposed)return;
+ const last=Array.from(list.querySelectorAll('[data-message-id]')).reduce((a,e)=>BigInt(e.dataset.messageId)>BigInt(a)?e.dataset.messageId:a,'0');
+ if(last==='0'||BigInt(last)<=BigInt(acked))return;
+ const csrf=root.querySelector('input[name="csrf"]');if(!csrf)return;
+ acknowledging=true;try{const res=await fetch('/chats/'+encodeURIComponent(id)+'/read',{method:'POST',credentials:'same-origin',headers:{'Accept':'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({csrf:csrf.value,last_message_id:last})});if(res.ok)acked=last;}catch(e){}finally{acknowledging=false;}
+ }
     function showError(message) {
       error.textContent = message;
       error.hidden = !message;
@@ -271,8 +280,9 @@
       article.dataset.messageId = messageID;
       const meta = element('div', 'chat-message-meta');
       meta.append(element('strong', '', message.sender_name));
-      meta.append(element('span', '', message.role === 'vet' ? 'دامپزشک' : message.role === 'owner' ? 'صاحب حیوان' : 'مدیریت'));
-      article.append(meta);
+      meta.append(element('span', '', message.role === 'vet' ? 'دامپزشک' : message.role === 'owner' ? 'صاحب حیوان' : message.role==='provider' ? 'متخصص' : 'مدیریت'));
+      if(message.unread){article.classList.add('chat-message-new');meta.append(element('span','chat-unread-label','پیام جدید'));}
+ article.append(meta);
       if (message.body) {
         const body = element('p', 'chat-message-body', message.body);
         body.dir = 'auto';
@@ -327,9 +337,9 @@
         root.querySelectorAll('[data-chat-end]').forEach(el => { el.hidden = true; });
         root.querySelectorAll('.chat-admin-duration').forEach(el => { el.hidden = true; });
         if (recording) stopRecording(true);
-        if (previous !== 'archived' && participant && !done && !redirecting) {
+        if (previous !== 'archived' && participant && (root.dataset.chatRole==='owner' || (medical && !done)) && !redirecting) {
           redirecting = true;
-          window.location.assign(questionnaireURL);
+          window.location.assign(root.dataset.chatRole==='owner' ? '/dashboard' : questionnaireURL);
         }
       } else if (state === 'scheduled') {
         notice.hidden = false;
@@ -347,7 +357,8 @@
         timerCaption.textContent = 'ارسال پیام تازه بسته شده است.';
         return;
       }
-      if (state !== 'active' || !expires) return;
+      if(!medical && state==='active'){timer.textContent='هماهنگی خدمت فعال است';timerCaption.textContent='پس از پایان فرایند خدمت بایگانی می‌شود.';return;}
+ if (state !== 'active' || !expires) return;
       const expiry = new Date(expires).getTime();
       if (Number.isNaN(expiry)) return;
       const seconds = Math.max(0, Math.ceil((expiry - Date.now()) / 1000));
@@ -383,6 +394,7 @@
         connection.textContent = data.state === 'archived' ? 'بایگانی' : 'متصل';
         connection.dataset.offline = 'false';
         updateState(data);
+ acknowledge();
       } catch (exception) {
         if (!disposed) {
           connection.textContent = 'در انتظار اتصال';
@@ -401,7 +413,7 @@
       root.querySelector('[data-chat-record-stop]').addEventListener('click', () => stopRecording(false));
       root.querySelector('[data-chat-record-discard]').addEventListener('click', () => stopRecording(true));
       text.addEventListener('keydown', event => {
-        if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && canSend && !busy) {
+        if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && canSend && !busy) {
           event.preventDefault();
           form.requestSubmit();
         }
@@ -449,8 +461,8 @@
       });
     }
 
-    newMessage.addEventListener('click', scrollBottom);
-    list.addEventListener('scroll', () => { if (atBottom()) newMessage.hidden = true; });
+    newMessage.addEventListener('click', ()=>{scrollBottom();acknowledge();});
+    list.addEventListener('scroll', () => { if (atBottom()) {newMessage.hidden = true;acknowledge();} });
     root.querySelectorAll('[data-chat-leave]').forEach(link => link.addEventListener('click', () => stopRecording(true)));
     const onVisible = () => { if (!document.hidden) poll(); };
     document.addEventListener('visibilitychange', onVisible);
@@ -478,6 +490,7 @@
     updateControls();
     updateTimer();
     scrollBottom();
+ acknowledge();
     requestAnimationFrame(() => { list.setAttribute('aria-live', 'polite'); });
     if (state !== 'archived') poll();
   }

@@ -10,6 +10,9 @@ func (a *App) chatForms(r *http.Request, p *Page) {
 		return
 	}
 	c := p.Chat
+	if c.Kind != "vet" {
+		return
+	}
 	scope := "customer-survey"
 	if c.Role == "vet" {
 		scope = "vet-report"
