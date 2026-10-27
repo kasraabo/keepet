@@ -43,6 +43,8 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	FollowupID string
+
 	LabFlow bool
 	LabCost int64
 
@@ -119,6 +121,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Care *FollowupPage
+
 	Notifications       *NotificationPage
 	UnreadNotifications int
 

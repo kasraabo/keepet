@@ -29,6 +29,10 @@ func (a *App) bookingPet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.FormValue("pet_id")
+	if !a.followupPetMatches(r.Context(), b, id, b.PetName, b.Species) {
+		a.fail(w, r, "پت این پیشنهاد قابل تغییر نیست؛ برای پت دیگر درخواست تازه بسازید", 409)
+		return
+	}
 	vs := map[string]string{}
 	if id != "" {
 		if sess(r).User == nil {

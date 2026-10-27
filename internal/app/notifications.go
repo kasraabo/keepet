@@ -7,10 +7,10 @@ import (
 )
 
 type Notification struct {
-	ID                                          int64
-	Kind, Event, BookingID, ChatID, Title, Link string
-	At                                          time.Time
-	ReadAt                                      *time.Time
+	ID                                                      int64
+	Kind, Event, BookingID, ChatID, Title, Link, FollowupID string
+	At                                                      time.Time
+	ReadAt                                                  *time.Time
 }
 type NotificationPage struct {
 	Items  []Notification
@@ -36,6 +36,11 @@ func (a *App) notificationsCount(w http.ResponseWriter, r *http.Request) {
 	chatJSON(w, 200, map[string]int{"unread": a.notificationCount(r)})
 }
 func notificationText(n *Notification, role string) {
+	if n.Kind == "care_followup" {
+		n.Title = n.Event
+		n.Link = "/follow-ups/" + n.FollowupID
+		return
+	}
 	if n.Kind == "chat_message" {
 		n.Title = "پیام جدید در گفت‌وگوی سفارش"
 		n.Link = "/chats/" + n.ChatID
@@ -67,7 +72,7 @@ func (a *App) notificationsPage(w http.ResponseWriter, r *http.Request) {
 	v := &NotificationPage{}
 	p.Notifications = v
 	u := sess(r).User
-	rows, e := a.DB.Query(r.Context(), "SELECT n.id,n.kind,n.event,COALESCE(n.booking_id,''),COALESCE(n.chat_id,''),n.created_at,n.read_at FROM notifications n LEFT JOIN bookings b ON b.id=n.booking_id WHERE n.user_id=$1 AND "+notificationAccess+" ORDER BY n.id DESC LIMIT 100", u.ID, u.Role)
+	rows, e := a.DB.Query(r.Context(), "SELECT n.id,n.kind,n.event,COALESCE(n.booking_id,''),COALESCE(n.chat_id,''),n.created_at,n.read_at,COALESCE(n.followup_id,'') FROM notifications n LEFT JOIN bookings b ON b.id=n.booking_id WHERE n.user_id=$1 AND "+notificationAccess+" ORDER BY n.id DESC LIMIT 100", u.ID, u.Role)
 	if e != nil {
 		a.fail(w, r, "اعلان‌ها بارگذاری نشد", 500)
 		return
@@ -75,7 +80,7 @@ func (a *App) notificationsPage(w http.ResponseWriter, r *http.Request) {
 	defer rows.Close()
 	for rows.Next() {
 		var n Notification
-		if e = rows.Scan(&n.ID, &n.Kind, &n.Event, &n.BookingID, &n.ChatID, &n.At, &n.ReadAt); e != nil {
+		if e = rows.Scan(&n.ID, &n.Kind, &n.Event, &n.BookingID, &n.ChatID, &n.At, &n.ReadAt, &n.FollowupID); e != nil {
 			break
 		}
 		notificationText(&n, u.Role)
@@ -118,7 +123,7 @@ func (a *App) notificationRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var n Notification
-	e = a.DB.QueryRow(r.Context(), "UPDATE notifications n SET read_at=COALESCE(n.read_at,now()) WHERE n.id=$3 AND n.user_id=$1 AND EXISTS(SELECT 1 FROM notifications n LEFT JOIN bookings b ON b.id=n.booking_id WHERE n.id=$3 AND n.user_id=$1 AND "+notificationAccess+") RETURNING n.kind,n.event,COALESCE(n.booking_id,''),COALESCE(n.chat_id,'')", u.ID, u.Role, id).Scan(&n.Kind, &n.Event, &n.BookingID, &n.ChatID)
+	e = a.DB.QueryRow(r.Context(), "UPDATE notifications n SET read_at=COALESCE(n.read_at,now()) WHERE n.id=$3 AND n.user_id=$1 AND EXISTS(SELECT 1 FROM notifications n LEFT JOIN bookings b ON b.id=n.booking_id WHERE n.id=$3 AND n.user_id=$1 AND "+notificationAccess+") RETURNING n.kind,n.event,COALESCE(n.booking_id,''),COALESCE(n.chat_id,''),COALESCE(n.followup_id,'')", u.ID, u.Role, id).Scan(&n.Kind, &n.Event, &n.BookingID, &n.ChatID, &n.FollowupID)
 	if e != nil {
 		a.fail(w, r, "اعلان پیدا نشد", 404)
 		return

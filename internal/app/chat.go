@@ -48,6 +48,8 @@ type ChatSummary struct {
 	QuestionnaireDone                              bool
 }
 type ChatView struct {
+	CanOfferFollowup bool
+
 	BookingStatus string
 	Events        []Event
 
@@ -319,6 +321,15 @@ func (a *App) chatPage(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "گفت‌وگو · "+v.PetName)
 	p.Chat = v
+	items, e := a.careList(r.Context(), sess(r).User.ID, v.BookingID, contains([]string{"admin", "ops"}, sess(r).User.Role))
+	if e != nil {
+		a.chatFailure(w, r, "پیگیری‌ها بارگذاری نشد", 500)
+		return
+	}
+	p.Care = &FollowupPage{Items: items}
+	if sess(r).User.Role == "provider" && v.Kind == "vet" && v.Role == "vet" && v.State == "archived" && v.BookingStatus == "completed" && v.VetForm != nil {
+		a.DB.QueryRow(r.Context(), "SELECT active AND verified FROM providers WHERE user_id=$1 AND service='vet'", sess(r).User.ID).Scan(&v.CanOfferFollowup)
+	}
 	a.chatForms(r, &p)
 	a.render(w, r, "chat", p)
 }

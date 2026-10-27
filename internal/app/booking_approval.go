@@ -285,8 +285,25 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "retry" && own && contains([]string{"request_rejected", "request_expired", "request_cancelled"}, b.Status) {
+		if b.FollowupID != "" {
+			var current string
+			if e = tx.QueryRow(ctx, "SELECT COALESCE(booking_id,'') FROM care_followups WHERE id=$1 FOR UPDATE", b.FollowupID).Scan(&current); e != nil {
+				fail("پیگیری در دسترس نیست", 409)
+				return
+			}
+			if current != "" && current != b.ID {
+				var state string
+				tx.QueryRow(ctx, "SELECT status FROM bookings WHERE id=$1", current).Scan(&state)
+				redirect(w, r, careBookingURL(current, state))
+				return
+			}
+		}
+
 		id := token()
-		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true,true,service='sampling' FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
+		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow,followup_id) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true,true,service='sampling',followup_id FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
+		if e == nil && b.FollowupID != "" {
+			_, e = tx.Exec(ctx, "UPDATE care_followups SET booking_id=$2,updated_at=now() WHERE id=$1", b.FollowupID, id)
+		}
 		if e == nil {
 			e = tx.Commit(ctx)
 		}

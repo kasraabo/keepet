@@ -115,6 +115,8 @@ func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 			p.Providers = append(p.Providers, v)
 		}
 	}
+	r = a.followupBookingContext(r, &b, &p)
+	p.Booking = &b
 	if b.TimeFlow && b.Stage == 3 {
 		p.Schedule = a.scheduleView(r, &b)
 		p.Booking = &b
@@ -224,6 +226,10 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		selectedPet := b.Answers["_pet_id"]
+		if !a.followupPetMatches(r.Context(), b, selectedPet, b.PetName, b.Species) {
+			bad("این پیشنهاد مخصوص پت همان پرونده است؛ برای پت دیگر درخواست تازه ثبت کنید.")
+			return
+		}
 		if e := a.stepPet(r, &b); e != nil {
 			bad(e.Error())
 			return
@@ -540,6 +546,12 @@ func (a *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
 		return
 	}
+	items, e := a.careList(r.Context(), sess(r).User.ID, "", false)
+	if e != nil {
+		a.fail(w, r, "پیگیری‌ها بارگذاری نشد", 500)
+		return
+	}
+	p.Care = &FollowupPage{Items: items}
 	a.render(w, r, "dashboard", p)
 }
 func (a *App) detail(w http.ResponseWriter, r *http.Request) {
@@ -581,6 +593,12 @@ func (a *App) detail(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "پروندهٔ گفتگو بارگذاری نشد", 500)
 		return
 	}
+	items, e := a.careList(r.Context(), sess(r).User.ID, b.ID, false)
+	if e != nil {
+		a.fail(w, r, "پیگیری‌ها بارگذاری نشد", 500)
+		return
+	}
+	p.Care = &FollowupPage{Items: items}
 	a.render(w, r, "detail", p)
 }
 func (a *App) cancel(w http.ResponseWriter, r *http.Request) {

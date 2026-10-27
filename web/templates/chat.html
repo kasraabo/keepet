@@ -56,7 +56,7 @@
     </section>
   </div>
   {{if or $c.VetForm $c.CustomerForm}}<section class="chat-results"><h2>جمع‌بندی ویزیت</h2>{{template "chat-form-results" .}}</section>{{end}}
-{{range .Forms}}<section class="panel spaced"><h2>{{.Name}}</h2>{{template "form-archive" .}}</section>{{end}}</main>
+{{if $c.CanOfferFollowup}}<section class="panel spaced"><h2>ادامهٔ مراقبت</h2><a class="btn" href="/chats/{{$c.ID}}/follow-up">پیشنهاد جلسه یا خدمت بعدی</a><p>مشتری پیشنهاد را بررسی و رزرو را خودش تأیید می‌کند.</p></section>{{end}}{{template "followup-section" .}}{{range .Forms}}<section class="panel spaced"><h2>{{.Name}}</h2>{{template "form-archive" .}}</section>{{end}}</main>
 {{end}}
 
 {{define "chat-admin-duration"}}
