@@ -124,7 +124,7 @@ func TestConsultationChat(t *testing.T) {
 	if err = a.DB.QueryRow(ctx, "SELECT current_database()").Scan(&dbname); err != nil || !strings.HasSuffix(dbname, "_test") {
 		t.Fatal("refusing to reset a database not suffixed _test")
 	}
-	if _, err = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config"); err != nil {
+	if _, err = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config CASCADE"); err != nil {
 		t.Fatal(err)
 	}
 	if err = a.seed(ctx); err != nil {
@@ -134,7 +134,7 @@ func TestConsultationChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() {
-		_, _ = a.DB.Exec(ctx, "TRUNCATE business_config")
+		_, _ = a.DB.Exec(ctx, "TRUNCATE business_config CASCADE")
 		_ = a.seedBusiness(ctx)
 	}()
 	srv := httptest.NewServer(a.Handler())

@@ -17,16 +17,18 @@ func (a *App) applySEO(r *http.Request, p *Page) {
 	rs, _ := a.records(r.Context(), "seo")
 	p.SEO.Description = "کیپت؛ مشاوره آنلاین دامپزشکی، گرومینگ و نمونه‌برداری در منزل در تهران، با هماهنگی تیم مراقبت."
 	for _, rec := range rs {
-		if rec.Data.Enabled && rec.Data.Link == r.URL.Path {
+		if rec.Data.Enabled && rec.Data.Link == editorialSEOPath(r) {
 			p.SEO.Title = rec.Data.Name
 			p.SEO.Description = rec.Data.Description
 			p.SEOBody = rec.Data.Body
+			d := rec.Data
+			p.SEORich = &d
 			break
 		}
 	}
 	base := a.publicBase(r.Context())
 	if base != "" {
-		p.SEO.Canonical = base + r.URL.Path
+		p.SEO.Canonical = base + editorialSEOPath(r)
 	}
 }
 func (a *App) supportAdmin(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +68,8 @@ func (a *App) saveContent(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "محتوا نامعتبر", 400)
 		return
 	}
-	if kind == "article" {
-		a.businessSave(w, r)
+	if contains([]string{"article", "page", "seo"}, kind) {
+		a.saveEditorial(w, r)
 		return
 	}
 	d := BusinessData{Name: trimmed(r.FormValue("name")), Body: trimmed(r.FormValue("body")), Link: trimmed(r.FormValue("link")), Description: trimmed(r.FormValue("description")), Enabled: r.FormValue("enabled") == "on"}
@@ -139,7 +141,7 @@ func (a *App) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 	out := Set{NS: "http://www.sitemaps.org/schemas/sitemap/0.9"} // The canonical host comes from configuration, never the request Host header.
 	base := a.publicBase(r.Context())
-	for _, path := range []string{"/", "/services/vet", "/services/grooming", "/services/sampling", "/support", "/join", "/pages/about", "/pages/magazine"} {
+	for _, path := range []string{"/", "/services/vet", "/services/grooming", "/services/sampling", "/support", "/join", "/pages/about", "/pages/magazine", "/specialists?service=vet", "/specialists?service=grooming"} {
 		out.URLs = append(out.URLs, URL{base + path})
 	}
 	ps, _ := a.providers(r.Context(), "")
@@ -151,7 +153,7 @@ func (a *App) sitemap(w http.ResponseWriter, r *http.Request) {
 	for _, kind := range []string{"page", "article"} {
 		rs, _ := a.records(r.Context(), kind)
 		for _, v := range rs {
-			if v.Data.Enabled && (kind != "article" || v.Data.ReviewedBy != "") {
+			if v.Data.Enabled {
 				prefix := "/pages/"
 				if kind == "article" {
 					prefix = "/magazine/"
@@ -182,6 +184,9 @@ func (a *App) seedEditorial(ctx context.Context) error {
 		return e
 	}
 	entries := []BusinessRecord{{Kind: "site", ID: "base", Data: BusinessData{Name: "نشانی عمومی سایت", Link: "http://85.198.54.32:8080", Enabled: true}}, {Kind: "seo", ID: "home", Data: BusinessData{Name: "خدمات دامپزشکی و مراقبت پت در تهران", Description: "مشاوره دامپزشکی آنلاین، گرومینگ و نمونه‌برداری ساده در منزل؛ رزرو با هماهنگی تیم کیپت.", Link: "/", Body: "کیپت همراه شما برای مراقبت از سگ و گربه در تهران است. درخواست‌های مشاوره، گرومینگ و نمونه‌برداری ساده با بررسی و هماهنگی تیم عملیات انجام می‌شوند.", Enabled: true}}, {Kind: "seo", ID: "support", Data: BusinessData{Name: "پشتیبانی کیپت", Description: "پرسش‌های متداول و ثبت درخواست پشتیبانی برای پیگیری خدمات پت.", Link: "/support", Enabled: true}}, {Kind: "seo", ID: "join", Data: BusinessData{Name: "همکاری دامپزشکان و گرومرها با کیپت", Description: "درخواست همکاری متخصصان مراقبت حیوانات خانگی؛ بررسی صلاحیت و هماهنگی توسط عملیات.", Link: "/join", Enabled: true}}}
+	for _, svc := range []string{"vet", "grooming"} {
+		entries = append(entries, BusinessRecord{Kind: "seo", ID: "directory-" + svc, Data: BusinessData{Name: "انتخاب متخصص کیپت", Link: "/specialists?service=" + svc, Enabled: false}})
+	}
 	for _, s := range Services {
 		entries = append(entries, BusinessRecord{Kind: "seo", ID: s.ID, Data: BusinessData{Name: s.Name + " در تهران", Description: s.Description, Link: "/services/" + s.ID, Body: s.Description + "\nثبت درخواست با بررسی تیم عملیات و هماهنگی زمان دقیق انجام می‌شود. فقط بازه‌های دارای ظرفیت قابل انتخاب هستند.", Enabled: true}})
 	}

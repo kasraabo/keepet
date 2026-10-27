@@ -77,7 +77,7 @@ func TestOnboarding(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	exec("TRUNCATE users CASCADE;TRUNCATE business_config")
+	exec("TRUNCATE users CASCADE;TRUNCATE business_config CASCADE")
 	if e = a.seed(ctx); e != nil {
 		t.Fatal(e)
 	}

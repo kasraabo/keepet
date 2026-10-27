@@ -16,7 +16,7 @@ func PublicDocument(title, seoTitle, description, canonical string, body templ.C
 		if canonical != "" {
 			head += `<link rel="canonical" href="` + html.EscapeString(canonical) + `">`
 		}
-		head += `<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon.svg"><link rel="stylesheet" href="/static/style.css"><script src="/static/numbers.js" defer></script><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/vendor/alpine.min.js" defer></script><script src="/static/app.js" defer></script><script src="/static/forms.js" defer></script><script src="/static/calendar.js" defer></script></head><body>`
+		head += `<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/static/icon.svg"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/editorial.css"><script src="/static/editorial.js" defer></script><script src="/static/numbers.js" defer></script><script src="/static/vendor/htmx.min.js" defer></script><script src="/static/vendor/alpine.min.js" defer></script><script src="/static/app.js" defer></script><script src="/static/forms.js" defer></script><script src="/static/calendar.js" defer></script></head><body>`
 		if _, e := io.WriteString(w, head); e != nil {
 			return e
 		}

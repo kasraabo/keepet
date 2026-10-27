@@ -29,13 +29,13 @@ func TestBusiness(t *testing.T) {
 	if e = a.DB.QueryRow(ctx, "SELECT current_database()").Scan(&db); e != nil || !strings.HasSuffix(db, "_test") {
 		t.Fatal("refusing non-test database")
 	}
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config"); e != nil {
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config CASCADE"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {
 		t.Fatal(e)
 	}
-	defer func() { a.DB.Exec(ctx, "TRUNCATE business_config"); a.seedBusiness(ctx) }()
+	defer func() { a.DB.Exec(ctx, "TRUNCATE business_config CASCADE"); a.seedBusiness(ctx) }()
 	srv := httptest.NewServer(a.Handler())
 	defer srv.Close()
 	admin := newBrowser(t, srv)
@@ -198,16 +198,19 @@ func TestBusiness(t *testing.T) {
 			t.Fatal("banner absent or XSS")
 		}
 	})
-	t.Run("scientific review publication and edit invalidation", func(t *testing.T) {
+	t.Run("optional scientific review and draft visibility", func(t *testing.T) {
 		v := url.Values{"revision": {"0"}, "name": {"مراقبت عمومی"}, "body": {"این یک متن آموزشی آزمایشی است."}}
 		if h, c := admin.post("/admin/article/post-test", v); c != 200 {
 			t.Fatalf("draft %d %s", c, h)
 		}
-		save("article", "post-test", url.Values{"body": {v.Get("body")}}, 409)
-		if _, c := groom.post("/provider/articles/post-test/review", url.Values{"revision": {"1"}}); c != 403 {
+		if _, c := newBrowser(t, srv).get("/magazine/post-test"); c != 404 {
+			t.Fatal("draft article public")
+		}
+		save("article", "post-test", url.Values{"body": {v.Get("body")}}, 200)
+		if _, c := groom.post("/provider/articles/post-test/review", url.Values{"revision": {"2"}}); c != 403 {
 			t.Fatal("non-vet review allowed")
 		}
-		if h, c := vet.post("/provider/articles/post-test/review", url.Values{"revision": {"1"}}); c != 200 {
+		if h, c := vet.post("/provider/articles/post-test/review", url.Values{"revision": {"2"}}); c != 200 {
 			t.Fatalf("review %d %s", c, h)
 		}
 		save("article", "post-test", url.Values{"body": {v.Get("body")}}, 200)

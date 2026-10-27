@@ -34,7 +34,7 @@ func TestBookingApproval(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec("TRUNCATE users CASCADE;TRUNCATE business_config;TRUNCATE booking_approval_settings;INSERT INTO booking_approval_settings(id) VALUES(1)")
+	exec("TRUNCATE users CASCADE;TRUNCATE business_config CASCADE;TRUNCATE booking_approval_settings;INSERT INTO booking_approval_settings(id) VALUES(1)")
 	if e = a.seed(ctx); e != nil {
 		t.Fatal(e)
 	}

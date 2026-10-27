@@ -104,10 +104,15 @@ func (a *App) replyTicket(w http.ResponseWriter, r *http.Request) {
 }
 func (a *App) publicPage(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
+	if slug == "magazine" {
+		a.magazine(w, r)
+		return
+	}
 	if d, ok := a.customPage(r, slug); ok {
 		p := a.page(r, d.Name)
 		p.Content = d.Body
-		a.render(w, r, "public", p)
+		p.Posts = []BusinessRecord{{Kind: "page", ID: slug, Data: d}}
+		a.render(w, r, "editorial-page", p)
 		return
 	}
 	if slug == "magazine" {

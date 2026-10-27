@@ -38,7 +38,7 @@ func TestLaboratory(t *testing.T) {
 			t.Fatal(e)
 		}
 	}
-	exec("TRUNCATE users CASCADE;TRUNCATE business_config;TRUNCATE laboratories,lab_tests,lab_packages,lab_package_items,lab_catalog CASCADE;INSERT INTO lab_catalog(id) VALUES(1)")
+	exec("TRUNCATE users CASCADE;TRUNCATE business_config CASCADE;TRUNCATE laboratories,lab_tests,lab_packages,lab_package_items,lab_catalog CASCADE;INSERT INTO lab_catalog(id) VALUES(1)")
 	if e = a.seed(ctx); e != nil {
 		t.Fatal(e)
 	}

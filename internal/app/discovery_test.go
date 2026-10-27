@@ -30,7 +30,7 @@ func TestDiscovery(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer a.Close()
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config"); e != nil {
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config CASCADE"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {

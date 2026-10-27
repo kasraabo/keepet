@@ -33,7 +33,7 @@ func TestReferralProgram(t *testing.T) {
 	}
 	defer a.Close()
 	defer func() { a.DB.Exec(ctx, "TRUNCATE referral_settings;INSERT INTO referral_settings(id) VALUES(1)") }()
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE;TRUNCATE business_config;TRUNCATE referral_settings;INSERT INTO referral_settings(id) VALUES(1)"); e != nil {
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE;TRUNCATE business_config CASCADE;TRUNCATE referral_settings;INSERT INTO referral_settings(id) VALUES(1)"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {

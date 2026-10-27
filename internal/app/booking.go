@@ -128,6 +128,7 @@ func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 		p.Slots, _ = a.slots(r.Context(), b)
 	}
 	if b.Stage == 2 && b.Service != "sampling" {
+		a.editorialSelectionSEO(r, &p, b.Service)
 		v, e := a.discover(r, &b)
 		if e != nil {
 			p.Error = "فهرست متخصصان بارگذاری نشد؛ صفحه را تازه کنید."

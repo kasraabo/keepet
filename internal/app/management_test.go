@@ -33,7 +33,7 @@ func TestManagement(t *testing.T) {
 	if !strings.HasSuffix(db, "_test") {
 		t.Fatal("refusing non-test database")
 	}
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config"); e != nil {
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config CASCADE"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {

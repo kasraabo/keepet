@@ -15,6 +15,12 @@ import (
 )
 
 type BusinessData struct {
+	ContentType string           `json:"content_type,omitempty"`
+	Cover       string           `json:"cover,omitempty"`
+	Video       string           `json:"video,omitempty"`
+	Category    string           `json:"category,omitempty"`
+	Blocks      []EditorialBlock `json:"blocks,omitempty"`
+
 	FixedFee        int64      `json:"fixed_fee,omitempty"`
 	VisitMinutes    int        `json:"visit_minutes,omitempty"`
 	DurationMinutes int        `json:"duration_minutes,omitempty"`
@@ -614,10 +620,6 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 						d.ReviewedBy = ""
 						d.ReviewedAt = nil
 					}
-					if d.Enabled && d.ReviewedBy == "" {
-						a.fail(w, r, "مقاله پیش از انتشار باید توسط دامپزشک تأییدشده بازبینی شود", 409)
-						return
-					}
 				}
 			}
 		}
@@ -702,28 +704,20 @@ func (a *App) article(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, v := range rs {
-		if v.ID == r.PathValue("slug") && v.Data.Enabled && v.Data.ReviewedBy != "" {
+		if v.ID == r.PathValue("slug") && v.Data.Enabled {
 			p := a.page(r, v.Data.Name)
 			p.Posts = []BusinessRecord{v}
+			if p.SEORich == nil {
+				p.SEO.Title = v.Data.Name
+				if v.Data.Description != "" {
+					p.SEO.Description = v.Data.Description
+				}
+			}
 			a.render(w, r, "article", p)
 			return
 		}
 	}
 	a.fail(w, r, "مقاله پیدا نشد", 404)
-}
-func (a *App) magazine(w http.ResponseWriter, r *http.Request) {
-	p := a.page(r, "مجلهٔ کیپت")
-	rs, e := a.records(r.Context(), "article")
-	if e != nil {
-		a.fail(w, r, "خواندن مجله ناموفق بود", 500)
-		return
-	}
-	for _, v := range rs {
-		if v.Data.Enabled && v.Data.ReviewedBy != "" {
-			p.Posts = append(p.Posts, v)
-		}
-	}
-	a.render(w, r, "magazine", p)
 }
 func (a *App) reviewArticle(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "provider") {
@@ -756,6 +750,10 @@ func (a *App) reviewArticle(w http.ResponseWriter, r *http.Request) {
 	}
 	var d BusinessData
 	json.Unmarshal(raw, &d)
+	if !d.Enabled {
+		a.fail(w, r, "بازبینی اختیاری فقط برای نسخهٔ منتشرشده ممکن است", 409)
+		return
+	}
 	now := time.Now()
 	d.ReviewedBy = sess(r).User.Name
 	d.ReviewedAt = &now
@@ -771,5 +769,5 @@ func (a *App) reviewArticle(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "بازبینی ثبت نشد", 500)
 		return
 	}
-	redirect(w, r, noticeURL("/provider", "تأیید علمی ثبت شد؛ مدیر می‌تواند همین نسخه را منتشر کند."))
+	redirect(w, r, noticeURL("/provider", "بازبینی اختیاری این نسخه ثبت شد."))
 }

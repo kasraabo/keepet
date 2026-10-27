@@ -38,7 +38,7 @@ func TestServiceFulfillment(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	exec("TRUNCATE users CASCADE;TRUNCATE business_config;TRUNCATE fulfillment_settings;INSERT INTO fulfillment_settings(id) VALUES(1);TRUNCATE referral_settings;INSERT INTO referral_settings(id,enabled,provider_enabled,invitee_bonus_enabled,invitee_bonus,vet_bps,grooming_bps,sampling_bps,basis) VALUES(1,true,true,true,200000,1000,1000,1000,'platform_share')")
+	exec("TRUNCATE users CASCADE;TRUNCATE business_config CASCADE;TRUNCATE fulfillment_settings;INSERT INTO fulfillment_settings(id) VALUES(1);TRUNCATE referral_settings;INSERT INTO referral_settings(id,enabled,provider_enabled,invitee_bonus_enabled,invitee_bonus,vet_bps,grooming_bps,sampling_bps,basis) VALUES(1,true,true,true,200000,1000,1000,1000,'platform_share')")
 	if err = a.seed(ctx); err != nil {
 		t.Fatal(err)
 	}

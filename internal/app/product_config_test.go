@@ -191,7 +191,7 @@ func TestProductConfiguration(t *testing.T) {
 			t.Fatal("existing page text not live")
 		}
 		magazine, _ := guest.get("/pages/magazine")
-		if !strings.Contains(magazine, "مقاله‌های بازبینی‌شده") {
+		if !strings.Contains(magazine, "مجلهٔ کیپت") {
 			t.Fatal("magazine overridden by seed")
 		}
 		if _, code := owner.get("/content"); code != 403 {

@@ -84,7 +84,7 @@ func New(ctx context.Context) (*App, error) {
 		return nil, err
 	}
 
-	t, err := template.New("pages").Funcs(template.FuncMap{"requestPanel": func(p Page, b Booking) Page { p.Booking = &b; return p }, "referralPercent": referralPercent, "referralKind": referralKind, "optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
+	t, err := template.New("pages").Funcs(template.FuncMap{"requestPanel": func(p Page, b Booking) Page { p.Booking = &b; return p }, "editorialVideo": editorialVideo, "editorialPosition": editorialPosition, "referralPercent": referralPercent, "referralKind": referralKind, "optionEnabled": optionEnabled, "walletStatus": walletStatus, "money": money, "jalali": jalaliDate, "bookingAnswers": bookingAnswers, "json": func(v any) string { return string(mustJSON(v)) }, "providerOriginal": func(p Provider) string {
 		b, _ := json.Marshal(map[string]any{"active": p.Active, "price": p.Price, "areas": p.Areas})
 		return string(b)
 	}, "digits": digits, "status": status, "service": service, "area": areaName, "period": period, "has": contains, "add": func(a, b int) int { return a + b }, "iso": func(t *time.Time) string {
@@ -183,7 +183,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; frame-src https://www.youtube-nocookie.com https://www.aparat.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
 		if strings.HasPrefix(r.URL.Path, "/static/") || r.URL.Path == "/sw.js" || r.URL.Path == "/manifest.webmanifest" {
 			next.ServeHTTP(w, r)
 			return
@@ -210,12 +210,16 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || (strings.HasPrefix(r.URL.Path, "/applications/") && strings.HasSuffix(r.URL.Path, "/documents")) || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && (strings.HasSuffix(r.URL.Path, "/fulfillment") || strings.HasSuffix(r.URL.Path, "/laboratory")))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || r.URL.Path == "/content/media" || (strings.HasPrefix(r.URL.Path, "/applications/") && strings.HasSuffix(r.URL.Path, "/documents")) || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && (strings.HasSuffix(r.URL.Path, "/fulfillment") || strings.HasSuffix(r.URL.Path, "/laboratory")))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
 				_ = controller.SetWriteDeadline(time.Now().Add(120 * time.Second))
-				r.Body = http.MaxBytesReader(w, r.Body, 14<<20)
+				uploadLimit := int64(14 << 20)
+				if r.URL.Path == "/content/media" {
+					uploadLimit = 66 << 20
+				}
+				r.Body = http.MaxBytesReader(w, r.Body, uploadLimit)
 				parseErr = r.ParseMultipartForm(1 << 20)
 				if r.MultipartForm != nil {
 					defer r.MultipartForm.RemoveAll()
@@ -337,6 +341,13 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /booking/{id}/step", a.bookingStep)
 	m.HandleFunc("POST /booking/{id}/pet", a.bookingPet)
 	m.HandleFunc("POST /booking/{id}/pay", a.pay)
+	m.HandleFunc("GET /content/library", a.editorialLibrary)
+	m.HandleFunc("GET /content/edit/{kind}/{id}", a.editorialEditor)
+	m.HandleFunc("GET /content/preview/{kind}/{id}", a.editorialPreview)
+	m.HandleFunc("POST /content/preview/{kind}/{id}", a.editorialPreview)
+	m.HandleFunc("POST /content/magazine-layout", a.saveMagazineLayout)
+	m.HandleFunc("POST /content/media", a.editorialUpload)
+	m.HandleFunc("GET /editorial-media/{id}", a.editorialAsset)
 	m.HandleFunc("GET /login", a.loginPage)
 	m.HandleFunc("GET /provider/login", a.providerLogin)
 	m.HandleFunc("POST /auth/google", a.googleStart)
@@ -442,7 +453,7 @@ func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page
 		return
 	}
 	component := templ.Raw(b.String())
-	if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(name, "management-") || name == "business" || strings.HasPrefix(r.URL.Path, "/content") {
+	if name != "editorial-preview" && (strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(name, "management-") || name == "business" || strings.HasPrefix(r.URL.Path, "/content")) {
 		ui.ManagementDocument(p.Title, component).Render(r.Context(), w)
 		return
 	}

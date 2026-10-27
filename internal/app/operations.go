@@ -250,7 +250,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	if qualified {
 		rs, _ := a.records(r.Context(), "article")
 		for _, v := range rs {
-			if v.Data.ReviewedBy == "" {
+			if v.Data.Enabled && v.Data.ReviewedBy == "" {
 				p.Posts = append(p.Posts, v)
 			}
 		}

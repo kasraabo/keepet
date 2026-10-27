@@ -44,8 +44,8 @@ func TestProviderPricing(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer a.Close()
-	defer func() { a.DB.Exec(ctx, "TRUNCATE business_config"); a.seedBusiness(ctx) }()
-	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config"); e != nil {
+	defer func() { a.DB.Exec(ctx, "TRUNCATE business_config CASCADE"); a.seedBusiness(ctx) }()
+	if _, e = a.DB.Exec(ctx, "TRUNCATE users CASCADE; TRUNCATE business_config CASCADE"); e != nil {
 		t.Fatal(e)
 	}
 	if e = a.seed(ctx); e != nil {

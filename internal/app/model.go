@@ -123,6 +123,9 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Editorial *EditorialPage
+	SEORich   *BusinessData
+
 	AuthIntent    string
 	AuthNew       bool
 	GoogleReady   bool
