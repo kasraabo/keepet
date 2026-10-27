@@ -22,7 +22,7 @@ func stampTestQuote(t *testing.T, a *App, id string) PriceQuote {
 	if e != nil {
 		t.Fatal(e)
 	}
-	if _, e = a.DB.Exec(ctx, "UPDATE bookings SET amount=$2,pricing_snapshot=$3 WHERE id=$1", id, q.Total, mustJSON(q)); e != nil {
+	if _, e = a.DB.Exec(ctx, "UPDATE bookings SET amount=$2,pricing_snapshot=$3,lab_cost=COALESCE(($3::jsonb->'Lab'->>'Cost')::bigint,0) WHERE id=$1", id, q.Total, mustJSON(q)); e != nil {
 		t.Fatal(e)
 	}
 	return q

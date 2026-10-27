@@ -21,7 +21,7 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	if sess(r).User != nil {
 		owner = sess(r).User.ID
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow,fulfillment_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true,true)", id, sess(r).Token, owner, svc.ID, token())
+	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true,true,$4='sampling')", id, sess(r).Token, owner, svc.ID, token())
 	if err != nil {
 		a.fail(w, r, "ایجاد درخواست انجام نشد", 500)
 		return
@@ -56,6 +56,9 @@ func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
 func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 	p := a.page(r, service(b.Service).Name)
 	p.Booking = &b
+	if b.LabFlow {
+		p.Samples = a.labMenu(r.Context())
+	}
 	if b.Service == "grooming" && b.ProviderID != "" {
 		p.Menu = a.customerGroomMenu(r.Context(), b.ProviderID)
 	}
@@ -248,7 +251,7 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			bad("علائم و پذیرش محدودیت مشاورهٔ آنلاین را تکمیل کنید.")
 			return
 		}
-		if b.Service == "sampling" && !contains([]string{"blood", "urine", "stool"}, b.Sample) {
+		if b.Service == "sampling" && ((!b.LabFlow && !contains([]string{"blood", "urine", "stool"}, b.Sample)) || (b.LabFlow && !a.labPackageAvailable(r.Context(), b.Sample))) {
 			bad("نمونه‌های برشی و بیوپسی فقط در کلینیک انجام می‌شوند. نوع نمونهٔ ساده را انتخاب کنید یا از پشتیبانی راهنمایی بگیرید.")
 			return
 		}
@@ -340,7 +343,7 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 			amount = q.Total
 			snapshot = mustJSON(q)
 		}
-		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET availability_id=$2,provider_id=$3,items=$4,amount=$5,pricing_snapshot=$6,stage=4 WHERE id=$1 AND status='draft'", b.ID, selected, b.ProviderID, b.Items, amount, snapshot)
+		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET availability_id=$2,provider_id=$3,items=$4,amount=$5,pricing_snapshot=$6,lab_cost=COALESCE(($6::jsonb->'Lab'->>'Cost')::bigint,0),stage=4 WHERE id=$1 AND status='draft'", b.ID, selected, b.ProviderID, b.Items, amount, snapshot)
 	default:
 		bad("مرحلهٔ نامعتبر")
 		return

@@ -195,6 +195,12 @@ func (a *App) submitRequest(w http.ResponseWriter, r *http.Request) {
 		fail("تنظیمات درخواست در دسترس نیست", 503)
 		return
 	}
+	if b.LabFlow {
+		if _, err := tx.Exec(ctx, "SELECT id FROM lab_catalog WHERE id=1 FOR SHARE"); err != nil {
+			fail("کاتالوگ در دسترس نیست", 503)
+			return
+		}
+	}
 	var policy []byte
 	var need bool
 	var active bool
@@ -280,7 +286,7 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "retry" && own && contains([]string{"request_rejected", "request_expired", "request_cancelled"}, b.Status) {
 		id := token()
-		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow,fulfillment_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true,true FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
+		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow,fulfillment_flow,lab_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true,true,service='sampling' FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
 		if e == nil {
 			e = tx.Commit(ctx)
 		}

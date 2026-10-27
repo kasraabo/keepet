@@ -202,7 +202,7 @@ func TestIntegration(t *testing.T) {
 			}
 			// This suite exercises historical paid-before-ops bookings. New request flow has its own integration suite.
 			id := m[1]
-			if _, e := a.DB.Exec(ctx, "UPDATE bookings SET request_flow=false,time_flow=false,fulfillment_flow=false WHERE id=$1", id); e != nil {
+			if _, e := a.DB.Exec(ctx, "UPDATE bookings SET request_flow=false,time_flow=false,fulfillment_flow=false,lab_flow=false WHERE id=$1", id); e != nil {
 				t.Fatal(e)
 			}
 			ids[svc] = id

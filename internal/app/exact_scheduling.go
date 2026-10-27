@@ -51,17 +51,41 @@ func (a *App) exactSlots(ctx context.Context, b Booking) ([]Slot, error) {
 	if minutes < 5 || minutes > 1440 {
 		return nil, fmt.Errorf("مدت خدمت معتبر نیست")
 	}
-	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,t::timestamptz,t::timestamptz+$6::integer*interval '1 minute',a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id CROSS JOIN LATERAL generate_series((a.day+a.start_time) AT TIME ZONE 'Asia/Tehran',((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')-$6::integer*interval '1 minute',interval '15 minutes') t WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($1='vet' OR $3=ANY(p.areas)) AND ($4='' OR p.id=$4) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND booking_time_available(p.id,a.id,t,$6,$5) ORDER BY t,p.id,(a.id=$7) DESC,a.id LIMIT 10000`, b.Service, b.Species, b.Area, b.ProviderID, b.ID, minutes, b.AvailabilityID)
+	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,t::timestamptz,t::timestamptz+$6::integer*interval '1 minute',a.capacity,COALESCE(p.sampling_rate,0) FROM availability a JOIN providers p ON p.id=a.provider_id CROSS JOIN LATERAL generate_series((a.day+a.start_time) AT TIME ZONE 'Asia/Tehran',((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')-$6::integer*interval '1 minute',interval '15 minutes') t WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($1='vet' OR $3=ANY(p.areas)) AND ($4='' OR p.id=$4) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND booking_time_available(p.id,a.id,t,$6,$5) ORDER BY t,p.id,(a.id=$7) DESC,a.id LIMIT 10000`, b.Service, b.Species, b.Area, b.ProviderID, b.ID, minutes, b.AvailabilityID)
 	if e != nil {
 		return nil, e
 	}
 	defer rows.Close()
+	var labCost int64
+	var rules BusinessData
+	if b.LabFlow {
+		q, e := a.quote(ctx, b)
+		if e != nil {
+			return nil, e
+		}
+		labCost = q.Lab.Cost
+		rules, e = a.pricingRules(ctx, "sampling")
+		if e != nil {
+			return nil, e
+		}
+	}
 	out := []Slot{}
 	seen := map[string]bool{}
 	for rows.Next() {
 		var s Slot
-		if e = rows.Scan(&s.ID, &s.ProviderID, &s.ProviderName, &s.Day, &s.Start, &s.End, &s.Capacity); e != nil {
+		var samplingRate int64
+		if e = rows.Scan(&s.ID, &s.ProviderID, &s.ProviderName, &s.Day, &s.Start, &s.End, &s.Capacity, &samplingRate); e != nil {
 			return nil, e
+		}
+		if b.LabFlow {
+			if samplingRate <= 0 {
+				continue
+			}
+			q := PriceQuote{Base: samplingRate}
+			if e := addPriceFees(&q, rules); e != nil {
+				return nil, e
+			}
+			s.QuotedPrice = q.Total + labCost
 		}
 		s.Start = s.Start.In(a.Location)
 		s.End = s.End.In(a.Location)
@@ -193,7 +217,7 @@ func (a *App) exactBookingStep(w http.ResponseWriter, r *http.Request, b Booking
 		a.fail(w, r, "قیمت یا مدت خدمت معتبر نیست", 409)
 		return
 	}
-	_, e = a.DB.Exec(r.Context(), "UPDATE bookings SET provider_id=$2,availability_id=$3,items=$4,amount=$5,pricing_snapshot=$6,exact_time=$7,duration_minutes=$8,stage=4 WHERE id=$1 AND status='draft'", b.ID, b.ProviderID, slot.ID, b.Items, quote.Total, mustJSON(quote), slot.Start, quote.Minutes)
+	_, e = a.DB.Exec(r.Context(), "UPDATE bookings SET provider_id=$2,availability_id=$3,items=$4,amount=$5,pricing_snapshot=$6,exact_time=$7,duration_minutes=$8,lab_cost=COALESCE(($6::jsonb->'Lab'->>'Cost')::bigint,0),stage=4 WHERE id=$1 AND status='draft'", b.ID, b.ProviderID, slot.ID, b.Items, quote.Total, mustJSON(quote), slot.Start, quote.Minutes)
 	if e != nil {
 		a.fail(w, r, "ثبت زمان انجام نشد", 500)
 		return

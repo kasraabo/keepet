@@ -42,7 +42,7 @@ type BusinessMetric struct {
 }
 type BusinessMoney struct {
 	ID, Provider, Service, Status, Reference string
-	Amount, Fee, Due                         int64
+	Amount, Fee, Due, LabCost                int64
 	Settled, Ready                           bool
 }
 type BusinessAudit struct {
@@ -185,7 +185,18 @@ func (a *App) livePage(ctx context.Context, p *Page) {
 						s.Price = q.Total
 					}
 				} else if s.ID == "sampling" {
-					a.DB.QueryRow(ctx, "SELECT COALESCE(min((data->>'price')::bigint),0) FROM business_config WHERE kind='sampling' AND (data->>'enabled')::boolean").Scan(&s.Price)
+					var base int64
+					a.DB.QueryRow(ctx, "SELECT COALESCE(min(sampling_rate),0) FROM providers WHERE service='sampling' AND active AND verified").Scan(&base)
+					q := PriceQuote{Base: base}
+					s.Price = 0
+					if addPriceFees(&q, r.Data) == nil {
+						for _, m := range a.labMenu(ctx) {
+							n := q.Total + m.Price
+							if s.Price == 0 || n < s.Price {
+								s.Price = n
+							}
+						}
+					}
 				}
 				p.Services = append(p.Services, s)
 			}
@@ -275,7 +286,7 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 	}
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM users WHERE role='owner'").Scan(&b.Owners)
 	a.DB.QueryRow(ctx, "SELECT count(*) FROM providers WHERE active AND verified").Scan(&b.ActiveProviders)
-	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)) FILTER(WHERE booking_settlement_ready(bookings)),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
+	rows, e := a.DB.Query(ctx, `SELECT service,count(*),COALESCE(sum(amount),0),COALESCE(sum(COALESCE(amount-provider_due,amount*commission_bps/10000)-lab_cost) FILTER(WHERE booking_settlement_ready(bookings)),0) FROM bookings WHERE paid_at IS NOT NULL GROUP BY service ORDER BY service`)
 	if e != nil {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
@@ -295,14 +306,14 @@ func (a *App) admin(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "خواندن گزارش ناموفق بود", 500)
 		return
 	}
-	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(b.provider_due,b.amount-b.amount*b.commission_bps/10000),x.booking_id IS NOT NULL,COALESCE(x.reference,''),booking_settlement_ready(b) FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
+	rows, e = a.DB.Query(ctx, `SELECT b.id,COALESCE(p.name,'بدون ارائه‌دهنده'),b.service,b.status,b.amount,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000)-b.lab_cost,COALESCE(b.provider_due,b.amount-b.amount*b.commission_bps/10000),x.booking_id IS NOT NULL,COALESCE(x.reference,''),booking_settlement_ready(b),b.lab_cost FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
 	if e != nil {
 		a.fail(w, r, "خواندن مالی ناموفق بود", 500)
 		return
 	}
 	for rows.Next() {
 		var v BusinessMoney
-		if e = rows.Scan(&v.ID, &v.Provider, &v.Service, &v.Status, &v.Amount, &v.Fee, &v.Due, &v.Settled, &v.Reference, &v.Ready); e != nil {
+		if e = rows.Scan(&v.ID, &v.Provider, &v.Service, &v.Status, &v.Amount, &v.Fee, &v.Due, &v.Settled, &v.Reference, &v.Ready, &v.LabCost); e != nil {
 			break
 		}
 		b.Money = append(b.Money, v)
@@ -562,7 +573,7 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 					a.fail(w, r, "کمیسیون باید بین صفر و ۱۰۰۰۰ واحد باشد؛ ۱۰۰ واحد = یک درصد", 400)
 					return
 				}
-				if contains([]string{"vet", "grooming"}, id) {
+				if contains([]string{"vet", "grooming", "sampling"}, id) {
 					d.FixedFee, e = strconv.ParseInt(normalizeNumber(r.FormValue("fixed_fee")), 10, 64)
 					if r.FormValue("fixed_fee") == "" {
 						d.FixedFee = 0
@@ -655,21 +666,21 @@ func (a *App) businessExport(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "admin") {
 		return
 	}
-	rows, e := a.DB.Query(r.Context(), `SELECT b.id,b.service,b.status,b.amount,b.commission_bps,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000),COALESCE(p.name,''),b.refund_amount,b.refund_status,COALESCE(x.reference,'') FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
+	rows, e := a.DB.Query(r.Context(), `SELECT b.id,b.service,b.status,b.amount,b.commission_bps,COALESCE(b.amount-b.provider_due,b.amount*b.commission_bps/10000)-b.lab_cost,COALESCE(p.name,''),b.refund_amount,b.refund_status,COALESCE(x.reference,''),b.lab_cost FROM bookings b LEFT JOIN providers p ON p.id=b.provider_id LEFT JOIN business_payouts x ON x.booking_id=b.id WHERE b.paid_at IS NOT NULL ORDER BY b.paid_at DESC`)
 	if e != nil {
 		a.fail(w, r, "خروجی آماده نشد", 500)
 		return
 	}
 	defer rows.Close()
 	var records [][]string
-	records = append(records, []string{"booking", "service", "status", "gross_toman", "commission_bps", "fee_toman", "provider", "refund_toman", "refund_status", "simulation_payout_reference"})
+	records = append(records, []string{"booking", "service", "status", "gross_toman", "commission_bps", "fee_toman", "provider", "refund_toman", "refund_status", "simulation_payout_reference", "laboratory_cost_toman"})
 	for rows.Next() {
 		var id, svc, st, p, rs, ref string
-		var amount, bps, fee, refund int64
-		if e = rows.Scan(&id, &svc, &st, &amount, &bps, &fee, &p, &refund, &rs, &ref); e != nil {
+		var amount, bps, fee, refund, labCost int64
+		if e = rows.Scan(&id, &svc, &st, &amount, &bps, &fee, &p, &refund, &rs, &ref, &labCost); e != nil {
 			break
 		}
-		records = append(records, []string{id, svc, st, fmt.Sprint(amount), fmt.Sprint(bps), fmt.Sprint(fee), csvSafe(p), fmt.Sprint(refund), rs, csvSafe(ref)})
+		records = append(records, []string{id, svc, st, fmt.Sprint(amount), fmt.Sprint(bps), fmt.Sprint(fee), csvSafe(p), fmt.Sprint(refund), rs, csvSafe(ref), fmt.Sprint(labCost)})
 	}
 	if e == nil {
 		e = rows.Err()

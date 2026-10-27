@@ -43,6 +43,9 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	LabFlow bool
+	LabCost int64
+
 	FulfillmentFlow, FulfillmentDisputed       bool
 	AttendanceVerifiedAt, SettlementApprovedAt *time.Time
 
@@ -65,6 +68,8 @@ type Booking struct {
 	PaidAt, ExactTime                                                                                                                                                                                                                           *time.Time
 }
 type Slot struct {
+	QuotedPrice int64
+
 	Used int
 
 	ID, ProviderID, Day, Period      string
@@ -114,6 +119,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Laboratory *LabPage
+
 	Fulfillment *FulfillmentView
 
 	Schedule *ScheduleView

@@ -148,6 +148,10 @@ func (a *App) opsAction(w http.ResponseWriter, r *http.Request) {
 		event = "cancel_requested"
 		detail = "لغو از سمت کیپت؛ بازگشت کامل و بررسی جبران. " + reason
 	case "result":
+		if b.LabFlow {
+			a.fail(w, r, "نتیجه را از صفحهٔ نتیجهٔ آزمایش ثبت و منتشر کنید", 409)
+			return
+		}
 		if b.Service != "sampling" || b.Status != "delivered" || strings.TrimSpace(r.FormValue("result")) == "" {
 			a.fail(w, r, "نتیجه پس از تحویل به آزمایشگاه قابل ثبت است", 409)
 			return

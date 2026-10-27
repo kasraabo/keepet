@@ -147,7 +147,11 @@ func (a *App) seed(ctx context.Context) error {
 	}
 	ps := []Provider{{ID: "vet-nazanin", UserID: "demo-vet", Name: "دکتر نازنین مهر", Service: "vet", Bio: "مشاورهٔ سلامت سگ و گربه، تغذیه و مراقبت‌های پیشگیرانه", License: "DEMO-1001", Avatar: "vet", Price: 350000, Experience: 8}, {ID: "vet-arman", UserID: "demo-vet2", Name: "دکتر آرمان نوری", Service: "vet", Bio: "دامپزشکی حیوانات کوچک و مشاورهٔ بیماری‌های داخلی", License: "DEMO-1002", Avatar: "vet2", Price: 400000, Experience: 6}, {ID: "groom-sara", UserID: "demo-groomer", Name: "سارا رضایی", Service: "grooming", Bio: "پیرایش آرام و بدون عجله، با تجربهٔ مراقبت از گربه‌ها", Avatar: "groomer", Price: 0, Experience: 5}, {ID: "sample-amin", UserID: "demo-sampler", Name: "امین احمدی", Service: "sampling", Bio: "نمونه‌برداری ساده زیر نظر دامپزشک و انتقال به آزمایشگاه", Avatar: "sampler", Price: 0, Experience: 4}}
 	for _, p := range ps {
-		_, err := a.DB.Exec(ctx, "INSERT INTO providers(id,user_id,name,service,bio,license,verified,active,price,avatar,experience) VALUES($1,$2,$3,$4,$5,$6,true,true,$7,$8,$9) ON CONFLICT DO NOTHING", p.ID, p.UserID, p.Name, p.Service, p.Bio, p.License, p.Price, p.Avatar, p.Experience)
+		var sampleRate any
+		if p.Service == "sampling" {
+			sampleRate = int64(200000)
+		} // New development account only; never replace an existing provider tariff.
+		_, err := a.DB.Exec(ctx, "INSERT INTO providers(id,user_id,name,service,bio,license,verified,active,price,avatar,experience,sampling_rate) VALUES($1,$2,$3,$4,$5,$6,true,true,$7,$8,$9,$10) ON CONFLICT DO NOTHING", p.ID, p.UserID, p.Name, p.Service, p.Bio, p.License, p.Price, p.Avatar, p.Experience, sampleRate)
 		if err != nil {
 			return err
 		}
@@ -162,7 +166,10 @@ func (a *App) seed(ctx context.Context) error {
 			}
 		}
 	}
-	return a.seedBusiness(ctx)
+	if e := a.seedBusiness(ctx); e != nil {
+		return e
+	}
+	return a.seedLabs(ctx)
 }
 
 type key int
@@ -202,7 +209,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && strings.HasSuffix(r.URL.Path, "/fulfillment"))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && (strings.HasSuffix(r.URL.Path, "/fulfillment") || strings.HasSuffix(r.URL.Path, "/laboratory")))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -262,6 +269,12 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("GET /bookings/{id}/fulfillment", a.fulfillmentPage)
 	m.HandleFunc("POST /bookings/{id}/fulfillment", a.fulfillmentAction)
 	m.HandleFunc("GET /bookings/{id}/handover/{receipt}", a.handoverDownload)
+	m.HandleFunc("GET /management/laboratories", a.labManagement)
+	m.HandleFunc("POST /management/laboratories/catalog", a.saveLabCatalog)
+	m.HandleFunc("POST /management/laboratories/payments/{id}", a.recordLabPayment)
+	m.HandleFunc("GET /bookings/{id}/laboratory", a.labOrderPage)
+	m.HandleFunc("POST /bookings/{id}/laboratory", a.labOrderAction)
+	m.HandleFunc("GET /bookings/{id}/laboratory/{report}", a.labReportDownload)
 	m.HandleFunc("GET /management/fulfillment", a.fulfillmentSettingsPage)
 	m.HandleFunc("POST /management/fulfillment", a.saveFulfillmentSettings)
 	m.HandleFunc("GET /wallet", a.walletPage)
@@ -501,11 +514,11 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	return ps, rows.Err()
 }
 
-const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason,time_flow,COALESCE(duration_minutes,0),fulfillment_flow,attendance_verified_at,settlement_approved_at,fulfillment_disputed"
+const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason,time_flow,COALESCE(duration_minutes,0),fulfillment_flow,attendance_verified_at,settlement_approved_at,fulfillment_disputed,lab_flow,lab_cost"
 
 func scanBooking(row pgx.Row) (Booking, error) {
 	var b Booking
-	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason, &b.TimeFlow, &b.DurationMinutes, &b.FulfillmentFlow, &b.AttendanceVerifiedAt, &b.SettlementApprovedAt, &b.FulfillmentDisputed)
+	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason, &b.TimeFlow, &b.DurationMinutes, &b.FulfillmentFlow, &b.AttendanceVerifiedAt, &b.SettlementApprovedAt, &b.FulfillmentDisputed, &b.LabFlow, &b.LabCost)
 	return b, err
 }
 func (a *App) getBooking(r *http.Request) (Booking, error) {

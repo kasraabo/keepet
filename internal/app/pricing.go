@@ -9,6 +9,8 @@ import (
 )
 
 type PriceQuote struct {
+	Lab *LabQuote `json:",omitempty"`
+
 	Base, Markup, Fixed, Total, Hourly int64
 	// Rounding is read only for archived quotes from the previous pricing version.
 	Rounding     int64
@@ -82,6 +84,9 @@ func (a *App) quote(ctx context.Context, b Booking) (PriceQuote, error) {
 		return q, fmt.Errorf("خدمت غیرفعال است")
 	}
 	if b.Service == "sampling" {
+		if b.LabFlow {
+			return a.samplingQuote(ctx, b, d)
+		}
 		for _, m := range a.liveMenu(ctx, "sampling") {
 			if m.ID == b.Sample {
 				if m.Price <= 0 || d.Commission < 0 || d.Commission > 10000 {
@@ -179,11 +184,15 @@ func (a *App) providerPricing(w http.ResponseWriter, r *http.Request) {
 	var rate *int64
 	var legacy int64
 	e := a.DB.QueryRow(r.Context(), "SELECT id,service,tariff_revision,hourly_rate,price FROM providers WHERE user_id=$1 AND active", p.User.ID).Scan(&t.ProviderID, &t.Service, &t.Revision, &rate, &legacy)
-	if e != nil || t.Service == "sampling" {
+	if e != nil {
 		a.fail(w, r, "تعرفهٔ این خدمت از مدیریت تعیین می‌شود", 403)
 		return
 	}
-	t.Hourly = legacy * 2
+	if t.Service == "sampling" {
+		a.DB.QueryRow(r.Context(), "SELECT COALESCE(sampling_rate,0) FROM providers WHERE id=$1", t.ProviderID).Scan(&t.Hourly)
+	} else {
+		t.Hourly = legacy * 2
+	}
 	if rate != nil {
 		t.Hourly = *rate
 	}
@@ -214,7 +223,7 @@ func (a *App) saveProviderPricing(w http.ResponseWriter, r *http.Request) {
 	var id, svc string
 	var rev int64
 	e = tx.QueryRow(ctx, "SELECT id,service,tariff_revision FROM providers WHERE user_id=$1 AND active FOR UPDATE", sess(r).User.ID).Scan(&id, &svc, &rev)
-	if e != nil || !contains([]string{"vet", "grooming"}, svc) {
+	if e != nil || !contains([]string{"vet", "grooming", "sampling"}, svc) {
 		a.fail(w, r, "دسترسی ندارید", 403)
 		return
 	}
@@ -230,7 +239,14 @@ func (a *App) saveProviderPricing(w http.ResponseWriter, r *http.Request) {
 		}
 		return v, nil
 	}
-	if svc == "vet" {
+	if svc == "sampling" {
+		v, err := parse("sampling_rate")
+		if err != nil {
+			a.fail(w, r, err.Error(), 400)
+			return
+		}
+		_, e = tx.Exec(ctx, "UPDATE providers SET sampling_rate=$2,tariff_revision=tariff_revision+1 WHERE id=$1", id, v)
+	} else if svc == "vet" {
 		v, err := parse("hourly_rate")
 		if err != nil {
 			a.fail(w, r, err.Error(), 400)

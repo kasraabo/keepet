@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -127,6 +128,15 @@ func (a *App) fulfillmentPage(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "حضور و پیگیری خدمت")
 	p.Booking = &b
 	p.Fulfillment = v
+	if b.LabFlow {
+		var raw []byte
+		if e := a.DB.QueryRow(r.Context(), "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&raw); e == nil {
+			var q PriceQuote
+			if json.Unmarshal(raw, &q) == nil {
+				p.Pricing = &q
+			}
+		}
+	}
 	e = a.DB.QueryRow(r.Context(), "SELECT completion_reported_at,completion_deadline,fulfillment_disputed,fulfillment_issue FROM bookings WHERE id=$1", b.ID).Scan(&v.ReportedAt, &v.Deadline, &v.Disputed, &v.Issue)
 	if e != nil {
 		a.fail(w, r, "اطلاعات خدمت بارگذاری نشد", 500)
@@ -359,6 +369,15 @@ func (a *App) fulfillmentAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		lab := strings.TrimSpace(r.FormValue("lab_name"))
+		if b.LabFlow {
+			var raw []byte
+			var q PriceQuote
+			if e := tx.QueryRow(ctx, "SELECT pricing_snapshot FROM bookings WHERE id=$1", b.ID).Scan(&raw); e != nil || json.Unmarshal(raw, &q) != nil || q.Lab == nil {
+				fail("آزمایشگاه توافق‌شده معتبر نیست", 409)
+				return
+			}
+			lab = q.Lab.LabName
+		}
 		reference := strings.TrimSpace(r.FormValue("reference"))
 		if len(lab) < 3 || len(lab) > 300 || len(reference) > 200 {
 			fail("نام آزمایشگاه و شمارهٔ رسید معتبر وارد کنید", 400)
