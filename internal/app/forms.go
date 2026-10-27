@@ -31,7 +31,7 @@ func ratingQ(id, label string, required bool) Question {
 }
 func (a *App) defaultForms() []FormView {
 	pet := []Question{textQ("pet_name", "نام پت", true), {ID: "species", Label: "نوع حیوان", Type: "select", Required: true, Options: []QuestionOption{{"cat", "گربه"}, {"dog", "سگ"}}}, textQ("birth_year", "سال تولد شمسی (اگر نمی‌دانید خالی بگذارید)", false), textQ("age", "سن تقریبی (اگر سال تولد را نمی‌دانید الزامی است)", false), textQ("weight", "وزن تقریبی (کیلوگرم)", false)}
-	owner := []Question{textQ("full_name", "نام و نام خانوادگی", false), {ID: "email", Label: "ایمیل", Type: "email"}, textQ("city", "شهر محل سکونت", false), textQ("emergency_phone", "شماره تماس جایگزین", false)}
+	owner := []Question{textQ("full_name", "نام و نام خانوادگی", true), {ID: "email", Label: "ایمیل", Type: "email"}, textQ("city", "شهر محل سکونت", false), textQ("emergency_phone", "شماره تماس جایگزین", false)}
 	professional := []Question{textQ("education", "تحصیلات و دوره‌های آموزشی", false), textQ("experience", "سابقه کار (سال)", false), textQ("specialties", "تخصص‌ها و مهارت‌ها", false), {ID: "background", Label: "سوابق همکاری و مراکز قبلی", Type: "textarea"}, {ID: "email", Label: "ایمیل حرفه‌ای", Type: "email"}}
 	forms := []FormView{{Scope: "pet", Name: "پروفایل پت", Questions: pet}, {Scope: "vet", Name: "شروع مشاوره دامپزشکی", Questions: a.Triage}, {Scope: "grooming", Name: "شروع گرومینگ", Questions: []Question{{ID: "behavior", Label: "خلق‌وخو و نکات مراقبت", Type: "textarea"}, {ID: "allergies", Label: "حساسیت‌ها و مشکلات پوستی", Type: "textarea"}, textQ("last_grooming", "آخرین زمان گرومینگ", false)}}, {Scope: "sampling", Name: "شروع نمونه‌برداری", Questions: []Question{textQ("lab_request", "نام آزمایش / درخواست دامپزشک", false), {ID: "medications", Label: "داروهای مصرفی و نکات مراقبت", Type: "textarea"}}}, {Scope: "signup-owner", Name: "ثبت‌نام مشتری", Questions: owner}, {Scope: "signup-vet", Name: "ثبت‌نام دامپزشک", Questions: professional}, {Scope: "signup-grooming", Name: "ثبت‌نام گرومر", Questions: professional}, {Scope: "signup-sampling", Name: "ثبت‌نام نمونه‌بردار", Questions: professional}, {Scope: "vet-report", Name: "گزارش پایان ویزیت", Questions: []Question{{ID: "symptoms", Label: "علائم کلی", Type: "textarea", Required: true}, {ID: "diagnosis", Label: "تشخیص", Type: "textarea", Required: true}, {ID: "prescription", Label: "تجویز و توصیه درمانی", Type: "textarea", Required: true}, ratingQ("customer_rating", "امتیاز به مشتری (اختیاری و محرمانه)", false), {ID: "customer_feedback", Label: "نظر درباره مشتری (اختیاری و محرمانه)", Type: "textarea"}}}, {Scope: "customer-survey", Name: "نظرسنجی پایان ویزیت", Questions: []Question{ratingQ("rating", "امتیاز کلی", true), ratingQ("communication", "کیفیت ارتباط", true), ratingQ("clarity", "وضوح توضیح‌ها", true), {ID: "body", Label: "نظر شما", Type: "textarea"}}}}
 	for i := range forms {
@@ -44,6 +44,9 @@ func (a *App) defaultForms() []FormView {
 		}
 		if strings.HasPrefix(forms[i].Scope, "signup-") && forms[i].Scope != "signup-owner" {
 			core := []Question{textQ("name", "نام و نام خانوادگی", true), textQ("license", "شماره مجوز / مدرک صلاحیت", forms[i].Scope == "signup-vet"), {ID: "price", Label: "تعرفه پیشنهادی (تومان)", Type: "number", Required: true}, {ID: "bio", Label: "معرفی و صلاحیت حرفه‌ای", Type: "textarea", Required: true}}
+			if forms[i].Scope != "signup-vet" {
+				core = append(core[:1], core[2:]...)
+			}
 			forms[i].Questions = append(core, forms[i].Questions...)
 		}
 	}
@@ -322,6 +325,18 @@ func (a *App) ownerProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	p := a.page(r, "مشخصات حساب")
 	saved := a.savedForm(r.Context(), "signup-owner", p.User.ID)
+	if saved.Values == nil {
+		saved.Values = map[string]string{}
+	}
+	if saved.Values["full_name"] == "" {
+		saved.Values["full_name"] = p.User.Name
+	}
+	if saved.Values["email"] == "" {
+		var email string
+		if a.DB.QueryRow(r.Context(), "SELECT email FROM google_identities WHERE user_id=$1", p.User.ID).Scan(&email) == nil {
+			saved.Values["email"] = email
+		}
+	}
 	p.Form = a.form(r.Context(), "signup-owner", saved.Values)
 	p.Next = safeNext(r.URL.Query().Get("next"))
 	a.render(w, r, "owner-profile", p)

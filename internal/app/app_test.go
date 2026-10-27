@@ -456,6 +456,10 @@ func TestIntegration(t *testing.T) {
 		if code != 400 {
 			t.Fatal("verification gate absent")
 		}
+		if _, c := ops.post("/ops/applications/"+id, url.Values{"decision": {"approved"}, "verified": {"on"}}); c != 409 {
+			t.Fatal("missing documents gate absent")
+		}
+		uploadOnboardingDoc(t, other, id, "کارت نظام دامپزشکی", []byte("%PDF-1.4\nTEST\n%%EOF"), 200)
 		_, code = ops.post("/ops/applications/"+id, url.Values{"decision": {"approved"}, "verified": {"on"}})
 		if code != 200 {
 			t.Fatalf("approval %d", code)

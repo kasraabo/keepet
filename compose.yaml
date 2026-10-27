@@ -20,6 +20,10 @@ services:
       DATABASE_URL: postgres://keepet:keepet_local_only@db:5432/keepet?sslmode=disable
       PORT: "8080"
       SETTINGS_KEY_FILE: /var/lib/keepet/settings.key
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URL: ${GOOGLE_REDIRECT_URL:-}
     volumes: ["app-secrets:/var/lib/keepet"]
     ports: ["127.0.0.1:8080:8080"]
     depends_on:

@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -27,6 +28,11 @@ func safeNext(s string) string {
 func (a *App) loginPage(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "ورود به کیپت")
 	p.Next = safeNext(r.URL.Query().Get("next"))
+	p.AuthIntent = "owner"
+	p.GoogleReady = googleConfigured()
+	if p.Next == "/join" || strings.HasPrefix(p.Next, "/provider") {
+		p.AuthIntent = "provider"
+	}
 	p.ReferralCode = normalizeReferralCode(r.URL.Query().Get("ref"))
 	if len(p.ReferralCode) > 40 {
 		p.ReferralCode = ""
@@ -37,6 +43,18 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 	p := a.page(r, "کد ورود")
 	p.Next = safeNext(r.FormValue("next"))
 	p.ReferralCode = normalizeReferralCode(r.FormValue("referral_code"))
+	p.AuthIntent = authIntent(r.FormValue("intent"), p.Next)
+	p.GoogleReady = googleConfigured()
+	p.GoogleAttempt = r.FormValue("google_attempt")
+	if p.GoogleAttempt != "" {
+		var next, intent, ref string
+		e := a.DB.QueryRow(r.Context(), "SELECT next_path,intent,referral_code,email FROM google_login_attempts WHERE state=$1 AND session_token=$2 AND subject<>'' AND NOT consumed AND expires_at>now()", p.GoogleAttempt, sess(r).Token).Scan(&next, &intent, &ref, &p.GoogleEmail)
+		if e != nil {
+			a.fail(w, r, "ورود گوگل منقضی شده؛ دوباره شروع کنید", 409)
+			return
+		}
+		p.Next, p.AuthIntent, p.ReferralCode = next, intent, ref
+	}
 	policy := a.otpPolicy(r.Context())
 	phone := normalize(r.FormValue("phone"))
 	if !phoneRE.MatchString(phone) {
@@ -91,7 +109,7 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 	}
 	p.DevCode = fmt.Sprintf("%0*d", policy.Digits, n.Int64())
 	p.Challenge = token()
-	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at,max_attempts,code_digits,referral_code) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(time.Duration(policy.TTL)*time.Second), policy.Attempts, policy.Digits, p.ReferralCode)
+	_, err = tx.Exec(r.Context(), "INSERT INTO otp_challenges(id,session_token,phone,code_hash,expires_at,max_attempts,code_digits,referral_code,next_path,login_intent,google_attempt) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,''))", p.Challenge, sess(r).Token, phone, hash(p.Challenge+p.DevCode), time.Now().Add(time.Duration(policy.TTL)*time.Second), policy.Attempts, policy.Digits, p.ReferralCode, p.Next, p.AuthIntent, p.GoogleAttempt)
 	if err != nil {
 		a.fail(w, r, "ذخیرهٔ کد ورود انجام نشد", 500)
 		return
@@ -101,6 +119,8 @@ func (a *App) requestOTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	p.AuthNew = true
+	a.DB.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM users WHERE phone=$1)", phone).Scan(&p.AuthNew)
 	a.renderAuth(w, r, "otp", p)
 }
 func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
@@ -118,10 +138,15 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	var attempts, maxAttempts int
 	var expires time.Time
 	var consumed bool
-	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed,max_attempts,code_digits,referral_code FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed, &maxAttempts, &p.CodeDigits, &p.ReferralCode)
+	err = tx.QueryRow(ctx, "SELECT phone,code_hash,attempts,expires_at,consumed,max_attempts,code_digits,referral_code,next_path,login_intent,COALESCE(google_attempt,'') FROM otp_challenges WHERE id=$1 AND session_token=$2 FOR UPDATE", p.Challenge, sess(r).Token).Scan(&phone, &h, &attempts, &expires, &consumed, &maxAttempts, &p.CodeDigits, &p.ReferralCode, &p.Next, &p.AuthIntent, &p.GoogleAttempt)
 	if err != nil || consumed || attempts >= maxAttempts || time.Now().After(expires) {
 		p.Error = "کد منقضی یا مصرف شده است. کد تازه درخواست کنید."
 		a.renderAuth(w, r, "login", p)
+		return
+	}
+	p.AuthNew = true
+	if e := tx.QueryRow(ctx, "SELECT NOT EXISTS(SELECT 1 FROM users WHERE phone=$1)", phone).Scan(&p.AuthNew); e != nil {
+		a.fail(w, r, "بررسی حساب انجام نشد", 500)
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(h), []byte(hash(p.Challenge+normalize(r.FormValue("code"))))) != 1 {
@@ -134,7 +159,11 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 	var u User
 	newOwner := false
 	err = tx.QueryRow(ctx, "SELECT id,phone,name,role FROM users WHERE phone=$1", phone).Scan(&u.ID, &u.Phone, &u.Name, &u.Role)
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		a.fail(w, r, "بررسی حساب انجام نشد", 500)
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
 		if r.FormValue("terms") != "on" {
 			p.Error = "پذیرش قوانین برای ساخت حساب لازم است."
 			a.renderAuth(w, r, "otp", p)
@@ -142,6 +171,12 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		}
 		newOwner = true
 		u = User{ID: token(), Phone: phone, Name: strings.TrimSpace(r.FormValue("name")), Role: "owner"}
+		if p.GoogleAttempt != "" && u.Name == "" {
+			if e := tx.QueryRow(ctx, "SELECT name FROM google_login_attempts WHERE state=$1 AND session_token=$2 AND NOT consumed AND expires_at>now()", p.GoogleAttempt, sess(r).Token).Scan(&u.Name); e != nil {
+				a.fail(w, r, "ورود گوگل منقضی شد", 409)
+				return
+			}
+		}
 		if len(u.Name) > 200 {
 			a.fail(w, r, "نام خیلی طولانی است", 400)
 			return
@@ -170,10 +205,16 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "این حساب دسترسی مدیریت پلتفرم ندارد", 403)
 		return
 	}
+	if p.GoogleAttempt != "" {
+		if e := linkGoogleIdentity(ctx, tx, p.GoogleAttempt, sess(r).Token, u); e != nil {
+			a.fail(w, r, "این حساب گوگل قابل اتصال نیست؛ با شماره موبایل وارد شوید یا اتصال قبلی را بررسی کنید", 409)
+			return
+		}
+	}
 	newToken, newCSRF := token(), token()
 	_, err = tx.Exec(ctx, "INSERT INTO sessions(token,user_id,csrf,expires_at) VALUES($1,$2,$3,$4)", newToken, u.ID, newCSRF, time.Now().Add(7*24*time.Hour))
 	if err == nil {
-		_, err = tx.Exec(ctx, "UPDATE bookings SET owner_id=$1,session_token=$2 WHERE session_token=$3 AND status='draft'", u.ID, newToken, sess(r).Token)
+		_, err = tx.Exec(ctx, "UPDATE bookings SET owner_id=$1,session_token=$2 WHERE session_token=$3 AND owner_id IS NULL AND status='draft'", u.ID, newToken, sess(r).Token)
 	}
 	if err == nil {
 		_, err = tx.Exec(ctx, "UPDATE otp_challenges SET consumed=true WHERE id=$1", p.Challenge)
@@ -188,7 +229,7 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ورود انجام نشد", 500)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: "keepet_session", Value: newToken, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: 604800})
+	http.SetCookie(w, &http.Cookie{Name: "keepet_session", Value: newToken, Path: "/", HttpOnly: true, Secure: secureSessionCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: 604800})
 	next := p.Next
 	if next == "/dashboard" {
 		if u.Role == "ops" {
@@ -204,7 +245,10 @@ func (a *App) verifyOTP(w http.ResponseWriter, r *http.Request) {
 			next = "/provider"
 		}
 	}
-	if newOwner {
+	if p.AuthIntent == "provider" && u.Role == "owner" && (next == "/dashboard" || next == "/provider") {
+		next = "/join"
+	}
+	if newOwner && p.AuthIntent != "provider" {
 		next = "/profile?next=" + url.QueryEscape(next)
 	}
 	redirect(w, r, next)
@@ -223,4 +267,29 @@ func noticeURL(path, msg string) string {
 	q.Set("notice", msg)
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func authIntent(intent, next string) string {
+	if strings.HasPrefix(next, "/management") {
+		return "management"
+	}
+	if intent == "provider" || next == "/join" || strings.HasPrefix(next, "/provider") {
+		return "provider"
+	}
+	return "owner"
+}
+func (a *App) providerLogin(w http.ResponseWriter, r *http.Request) {
+	p := a.page(r, "ورود متخصصان کیپت")
+	p.AuthIntent = "provider"
+	p.Next = safeNext(r.URL.Query().Get("next"))
+	if p.Next == "/dashboard" {
+		p.Next = "/provider"
+	}
+	p.GoogleReady = googleConfigured()
+	p.ReferralCode = normalizeReferralCode(r.URL.Query().Get("ref"))
+	a.renderAuth(w, r, "login", p)
+}
+
+func secureSessionCookie(r *http.Request) bool {
+	return r.TLS != nil || os.Getenv("SESSION_COOKIE_SECURE") == "true"
 }

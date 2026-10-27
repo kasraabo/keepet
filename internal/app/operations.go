@@ -384,14 +384,18 @@ func (a *App) join(w http.ResponseWriter, r *http.Request) {
 	a.render(w, r, "join", p)
 }
 func (a *App) apply(w http.ResponseWriter, r *http.Request) {
-	if !a.auth(w, r) {
+	if !a.auth(w, r, "owner", "provider") {
 		return
 	}
 	svc := r.FormValue("service")
 	name := strings.TrimSpace(r.FormValue("name"))
+	license := strings.TrimSpace(r.FormValue("license"))
+	if svc != "vet" {
+		license = ""
+	}
 	bio := strings.TrimSpace(r.FormValue("bio"))
 	price, err := strconv.ParseInt(normalizeNumber(r.FormValue("price")), 10, 64)
-	if service(svc).ID == "" || name == "" || bio == "" || err != nil || price < 0 || (svc == "vet" && r.FormValue("license") == "") {
+	if service(svc).ID == "" || name == "" || bio == "" || err != nil || price < 0 || (svc == "vet" && license == "") {
 		a.fail(w, r, "اطلاعات، تعرفه و مدارک صلاحیت را کامل کنید", 400)
 		return
 	}
@@ -408,7 +412,15 @@ func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	id := token()
-	_, err = tx.Exec(r.Context(), "INSERT INTO applications(id,user_id,service,name,license,bio,area,price) VALUES($1,$2,$3,$4,$5,$6,$7,$8)", id, sess(r).User.ID, svc, name, r.FormValue("license"), bio, r.FormValue("area"), price)
+	if svc != "vet" {
+		answers["license"] = ""
+	}
+	_, err = tx.Exec(r.Context(), "UPDATE users SET name=$2 WHERE id=$1 AND role IN ('owner','provider')", sess(r).User.ID, name)
+	if err != nil {
+		a.fail(w, r, "نام ذخیره نشد", 500)
+		return
+	}
+	_, err = tx.Exec(r.Context(), "INSERT INTO applications(id,user_id,service,name,license,bio,area,price,documents_required) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)", id, sess(r).User.ID, svc, name, license, bio, r.FormValue("area"), price, svc == "vet")
 	if err == nil {
 		err = saveFormResponse(r.Context(), tx, f, id, sess(r).User.ID, answers)
 	}
@@ -419,7 +431,15 @@ func (a *App) apply(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "درخواست ثبت نشد", 500)
 		return
 	}
-	redirect(w, r, noticeURL("/provider", "درخواست همکاری ثبت شد؛ پس از بررسی عملیات فعال می‌شود."))
+	next := "/provider"
+	if svc == "vet" {
+		next = "/applications/" + id + "/documents"
+	}
+	msg := "درخواست همکاری ثبت شد؛ پس از بررسی عملیات فعال می‌شود."
+	if svc == "vet" {
+		msg = "درخواست همکاری ثبت شد؛ مدارک دامپزشکی را بارگذاری کنید. فعال‌سازی پس از بررسی عملیات است."
+	}
+	redirect(w, r, noticeURL(next, msg))
 }
 func (a *App) applicationDecision(w http.ResponseWriter, r *http.Request) {
 	if !a.auth(w, r, "ops", "admin") {
@@ -443,6 +463,11 @@ func (a *App) applicationDecision(w http.ResponseWriter, r *http.Request) {
 	if st == "approved" {
 		if r.FormValue("verified") != "on" || ap.Service == "vet" && ap.License == "" {
 			a.fail(w, r, "بررسی صلاحیت و مجوز را تأیید کنید", 400)
+			return
+		}
+		var ready bool
+		if e := tx.QueryRow(ctx, "SELECT NOT documents_required OR EXISTS(SELECT 1 FROM application_documents WHERE application_id=applications.id) FROM applications WHERE id=$1", ap.ID).Scan(&ready); e != nil || !ready {
+			a.fail(w, r, "برای تأیید درخواست دامپزشکی، ابتدا مدارک بارگذاری‌شده را بررسی کنید", 409)
 			return
 		}
 		areas := []string{}

@@ -112,6 +112,8 @@ type Event struct {
 	At            time.Time
 }
 type Application struct {
+	Documents []ApplicationDocument
+
 	Form                                                          FormView
 	ID, UserID, Service, Name, License, Bio, Area, Status, Reason string
 	Price                                                         int64
@@ -121,6 +123,12 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	AuthIntent    string
+	AuthNew       bool
+	GoogleReady   bool
+	GoogleEmail   string
+	GoogleAttempt string
+
 	Care *FollowupPage
 
 	Notifications       *NotificationPage

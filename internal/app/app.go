@@ -27,6 +27,7 @@ import (
 )
 
 type App struct {
+	GoogleHTTP *http.Client
 	DB         *pgxpool.Pool
 	Templates  *template.Template
 	Location   *time.Location
@@ -200,7 +201,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 				http.Error(w, "دیتابیس در دسترس نیست", 503)
 				return
 			}
-			http.SetCookie(w, &http.Cookie{Name: "keepet_session", Value: s.Token, Path: "/", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteLaxMode, MaxAge: 604800})
+			http.SetCookie(w, &http.Cookie{Name: "keepet_session", Value: s.Token, Path: "/", HttpOnly: true, Secure: secureSessionCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: 604800})
 		}
 		u := &User{}
 		if a.DB.QueryRow(r.Context(), "SELECT u.id,u.phone,u.name,u.role FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=$1", s.Token).Scan(&u.ID, &u.Phone, &u.Name, &u.Role) == nil {
@@ -209,7 +210,7 @@ func (a *App) middleware(next http.Handler) http.Handler {
 		r = r.WithContext(context.WithValue(r.Context(), sessionKey, s))
 		if r.Method == "POST" {
 			var parseErr error
-			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && (strings.HasSuffix(r.URL.Path, "/fulfillment") || strings.HasSuffix(r.URL.Path, "/laboratory")))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			if (strings.HasPrefix(r.URL.Path, "/chats/") && strings.HasSuffix(r.URL.Path, "/messages") || r.URL.Path == "/provider/media" || (strings.HasPrefix(r.URL.Path, "/applications/") && strings.HasSuffix(r.URL.Path, "/documents")) || strings.HasPrefix(r.URL.Path, "/management/wallet/withdrawals/") || (strings.HasPrefix(r.URL.Path, "/bookings/") && (strings.HasSuffix(r.URL.Path, "/fulfillment") || strings.HasSuffix(r.URL.Path, "/laboratory")))) && strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
 				// Keep ordinary requests short, while allowing bounded mobile uploads.
 				controller := http.NewResponseController(w)
 				_ = controller.SetReadDeadline(time.Now().Add(90 * time.Second))
@@ -337,6 +338,12 @@ func (a *App) Handler() http.Handler {
 	m.HandleFunc("POST /booking/{id}/pet", a.bookingPet)
 	m.HandleFunc("POST /booking/{id}/pay", a.pay)
 	m.HandleFunc("GET /login", a.loginPage)
+	m.HandleFunc("GET /provider/login", a.providerLogin)
+	m.HandleFunc("POST /auth/google", a.googleStart)
+	m.HandleFunc("GET /auth/google/callback", a.googleCallback)
+	m.HandleFunc("GET /applications/{id}/documents", a.applicationDocuments)
+	m.HandleFunc("POST /applications/{id}/documents", a.uploadApplicationDocument)
+	m.HandleFunc("GET /applications/{id}/documents/{document}", a.applicationDocumentDownload)
 	m.HandleFunc("POST /auth/request", a.requestOTP)
 	m.HandleFunc("POST /auth/verify", a.verifyOTP)
 	m.HandleFunc("POST /logout", a.logout)
@@ -425,7 +432,7 @@ func (a *App) page(r *http.Request, title string) Page {
 }
 func (a *App) render(w http.ResponseWriter, r *http.Request, name string, p Page) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if p.User != nil || strings.HasPrefix(r.URL.Path, "/booking") || r.URL.Path == "/login" {
+	if p.User != nil || strings.HasPrefix(r.URL.Path, "/booking") || r.URL.Path == "/login" || name == "login" || name == "otp" || strings.HasPrefix(name, "google-") || strings.HasPrefix(name, "management-") {
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	}
 	var b strings.Builder
@@ -470,6 +477,9 @@ func (a *App) auth(w http.ResponseWriter, r *http.Request, roles ...string) bool
 	u := sess(r).User
 	if u == nil {
 		login := "/login"
+		if strings.HasPrefix(r.URL.Path, "/provider") || r.URL.Path == "/join" {
+			login = "/provider/login"
+		}
 		if strings.HasPrefix(r.URL.Path, "/management") || strings.HasPrefix(r.URL.Path, "/admin") {
 			login = "/management/login"
 		}
