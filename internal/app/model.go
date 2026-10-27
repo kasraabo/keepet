@@ -43,6 +43,9 @@ type Provider struct {
 	Experience                                      int
 }
 type Booking struct {
+	TimeFlow        bool
+	DurationMinutes int
+
 	RequestFlow, RequiresOpsApproval bool
 	StageDeadline                    *time.Time
 	RequestReason                    string
@@ -70,7 +73,7 @@ type Slot struct {
 
 func (s Slot) Label() string {
 	if s.Period == "custom" {
-		return "دلخواه · " + digits(s.StartTime) + " تا " + digits(s.EndTime)
+		return digits(s.StartTime) + " تا " + digits(s.EndTime)
 	}
 	return period(s.Period)
 }
@@ -108,6 +111,8 @@ type Ticket struct {
 	Form                                    FormView
 }
 type Page struct {
+	Schedule *ScheduleView
+
 	Approval *ApprovalView
 
 	Referrals          *ReferralPage

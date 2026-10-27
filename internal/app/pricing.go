@@ -17,6 +17,8 @@ type PriceQuote struct {
 	Items        []MenuItem
 }
 type TariffItem struct {
+	Minutes int
+
 	ID, Name string
 	Price    int64
 	Enabled  bool
@@ -41,7 +43,7 @@ func (a *App) pricingRules(ctx context.Context, svc string) (BusinessData, error
 	return d, e
 }
 func (a *App) groomTariffs(ctx context.Context, id string) ([]TariffItem, error) {
-	rows, e := a.DB.Query(ctx, `SELECT c.id,c.data->>'name',COALESCE(t.price,(c.data->>'price')::bigint),COALESCE(t.enabled,true) FROM business_config c LEFT JOIN provider_tariffs t ON t.service_id=c.id AND t.provider_id=$1 WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean ORDER BY c.id`, id)
+	rows, e := a.DB.Query(ctx, `SELECT c.id,c.data->>'name',COALESCE(t.price,(c.data->>'price')::bigint),COALESCE(t.enabled,true),COALESCE(t.duration_minutes,NULLIF((c.data->>'duration_minutes')::integer,0),30) FROM business_config c LEFT JOIN provider_tariffs t ON t.service_id=c.id AND t.provider_id=$1 WHERE c.kind='grooming' AND (c.data->>'enabled')::boolean ORDER BY c.id`, id)
 	if e != nil {
 		return nil, e
 	}
@@ -49,7 +51,7 @@ func (a *App) groomTariffs(ctx context.Context, id string) ([]TariffItem, error)
 	var out []TariffItem
 	for rows.Next() {
 		var m TariffItem
-		if e = rows.Scan(&m.ID, &m.Name, &m.Price, &m.Enabled); e != nil {
+		if e = rows.Scan(&m.ID, &m.Name, &m.Price, &m.Enabled, &m.Minutes); e != nil {
 			return nil, e
 		}
 		out = append(out, m)
@@ -89,6 +91,12 @@ func (a *App) quote(ctx context.Context, b Booking) (PriceQuote, error) {
 				q.Base = m.Price - m.Price*int64(d.Commission)/10000
 				q.Markup = m.Price - q.Base
 				q.Total = m.Price
+				if b.TimeFlow {
+					q.Minutes = d.DurationMinutes
+					if q.Minutes == 0 {
+						q.Minutes = 30
+					}
+				}
 				return q, nil
 			}
 		}
@@ -123,6 +131,9 @@ func (a *App) quote(ctx context.Context, b Booking) (PriceQuote, error) {
 			for _, m := range menu {
 				if m.ID == id && m.Enabled {
 					q.Base += m.Price
+					if b.TimeFlow {
+						q.Minutes += m.Minutes
+					}
 					q.Items = append(q.Items, MenuItem{m.ID, m.Name, m.Price})
 					found = true
 					break
@@ -239,7 +250,16 @@ func (a *App) saveProviderPricing(w http.ResponseWriter, r *http.Request) {
 				a.fail(w, r, err.Error(), 400)
 				return
 			}
-			_, e = tx.Exec(ctx, `INSERT INTO provider_tariffs(provider_id,service_id,price,enabled) VALUES($1,$2,$3,$4) ON CONFLICT(provider_id,service_id) DO UPDATE SET price=EXCLUDED.price,enabled=EXCLUDED.enabled`, id, m.ID, v, r.FormValue("enabled_"+m.ID) == "on")
+			minutes := m.Minutes
+			if raw := r.FormValue("minutes_" + m.ID); raw != "" {
+				minutes, e = strconv.Atoi(normalize(raw))
+				if e != nil || minutes < 5 || minutes > 480 {
+					tx.Rollback(ctx)
+					a.fail(w, r, "مدت هر خدمت باید بین ۵ تا ۴۸۰ دقیقه باشد", 400)
+					return
+				}
+			}
+			_, e = tx.Exec(ctx, `INSERT INTO provider_tariffs(provider_id,service_id,price,enabled,duration_minutes) VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider_id,service_id) DO UPDATE SET price=EXCLUDED.price,enabled=EXCLUDED.enabled,duration_minutes=EXCLUDED.duration_minutes`, id, m.ID, v, r.FormValue("enabled_"+m.ID) == "on", minutes)
 			if e != nil {
 				break
 			}

@@ -1,0 +1,10 @@
+DO $$ BEGIN IF EXISTS(SELECT 1 FROM bookings WHERE time_flow AND submitted_at IS NOT NULL) THEN RAISE EXCEPTION 'live exact appointments require a planned data migration'; END IF; END $$;
+DROP TRIGGER exact_booking_guard ON bookings;
+DROP FUNCTION exact_booking_guard();
+DROP FUNCTION booking_window_has_time(text,integer,text);
+DROP FUNCTION booking_time_available(text,text,timestamptz,integer,text);
+DROP FUNCTION booking_window_peak(text,text);
+DROP FUNCTION provider_reservations(text,text);
+DROP INDEX bookings_provider_reservations;
+ALTER TABLE bookings DROP COLUMN time_flow,DROP COLUMN duration_minutes;
+ALTER TABLE provider_tariffs DROP COLUMN duration_minutes;

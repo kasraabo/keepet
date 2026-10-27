@@ -511,6 +511,15 @@ func (a *App) businessSave(w http.ResponseWriter, r *http.Request) {
 			json.Unmarshal(before, &d)
 		}
 		old := d
+		if (kind == "grooming" || (kind == "service" && id == "sampling")) && r.FormValue("duration_minutes") != "" {
+			v, err := strconv.Atoi(normalize(r.FormValue("duration_minutes")))
+			if err != nil || v < 5 || v > 480 {
+				tx.Rollback(ctx)
+				a.fail(w, r, "مدت مراجعه یا خدمت باید بین ۵ تا ۴۸۰ دقیقه باشد", 400)
+				return
+			}
+			d.DurationMinutes = v
+		}
 		d.Enabled = r.FormValue("enabled") == "on"
 		if kind == "chat" {
 			section = "integrations"

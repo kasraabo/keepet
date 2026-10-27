@@ -21,7 +21,7 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	if sess(r).User != nil {
 		owner = sess(r).User.ID
 	}
-	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true)", id, sess(r).Token, owner, svc.ID, token())
+	_, err := a.DB.Exec(r.Context(), "INSERT INTO bookings(id,session_token,owner_id,service,payment_key,request_flow,time_flow) VALUES($1,$2,NULLIF($3,''),$4,$5,true,true)", id, sess(r).Token, owner, svc.ID, token())
 	if err != nil {
 		a.fail(w, r, "ایجاد درخواست انجام نشد", 500)
 		return
@@ -29,10 +29,13 @@ func (a *App) createBooking(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/booking/"+id)
 }
 func (a *App) slots(ctx context.Context, b Booking) ([]Slot, error) {
+	if b.TimeFlow {
+		return a.exactSlots(ctx, b)
+	}
 	if !a.enabled(ctx, "service", b.Service) || (b.Service != "vet" && !a.enabled(ctx, "area", b.Area)) {
 		return nil, nil
 	}
-	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND booking_holds_capacity(b.payment_status,b.status,b.stage_deadline)) ORDER BY a.day,a.start_time`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
+	rows, err := a.DB.Query(ctx, `SELECT a.id,a.provider_id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$1 AND $2=ANY(p.species) AND ($3='vet' OR $4=ANY(p.areas)) AND ($5='' OR p.id=$5) AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date AND a.day<(now() AT TIME ZONE 'Asia/Tehran')::date+interval '14 days' AND a.capacity>booking_window_peak(a.id,'') ORDER BY a.day,a.start_time`, b.Service, b.Species, b.Service, b.Area, b.ProviderID)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +112,16 @@ func (a *App) bookingData(r *http.Request, b Booking, msg string) Page {
 			p.Providers = append(p.Providers, v)
 		}
 	}
-	p.Slots, _ = a.slots(r.Context(), b)
+	if b.TimeFlow && b.Stage == 3 {
+		p.Schedule = a.scheduleView(r, &b)
+		p.Booking = &b
+		p.Slots = p.Schedule.Options
+		if q, e := a.quote(r.Context(), b); e == nil {
+			p.Pricing = &q
+		}
+	} else if !b.TimeFlow {
+		p.Slots, _ = a.slots(r.Context(), b)
+	}
 	if b.Stage == 2 && b.Service != "sampling" {
 		v, e := a.discover(r, &b)
 		if e != nil {
@@ -135,6 +147,10 @@ func (a *App) bookingPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := a.bookingData(r, b, "")
+	if r.Header.Get("HX-Request") == "true" && b.TimeFlow && b.Stage == 3 {
+		a.renderFragment(w, r, "exact-time-picker", "#exact-time-picker", p)
+		return
+	}
 	if r.Header.Get("HX-Request") == "true" && b.Stage == 2 && b.Service != "sampling" {
 		a.renderFragment(w, r, "provider-results", "#provider-results", p)
 		return
@@ -163,6 +179,9 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.FormValue("back") == "1" {
+		if b.TimeFlow && b.Stage == 3 {
+			a.DB.Exec(r.Context(), "UPDATE bookings SET items=$2 WHERE id=$1 AND status='draft'", b.ID, append([]string{}, r.Form["items"]...))
+		}
 		if b.Stage > 1 {
 			a.DB.Exec(r.Context(), "UPDATE bookings SET stage=stage-1 WHERE id=$1 AND status='draft'", b.ID)
 		}
@@ -285,6 +304,10 @@ func (a *App) bookingStep(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = a.DB.Exec(r.Context(), "UPDATE bookings SET provider_id=NULLIF($2,''),availability_id=NULL,stage=3 WHERE id=$1 AND status='draft'", b.ID, b.ProviderID)
 	case 3:
+		if b.TimeFlow {
+			a.exactBookingStep(w, r, b)
+			return
+		}
 		b.Items = r.Form["items"]
 		amount, priceErr := a.price(r.Context(), b)
 		if priceErr != nil {
@@ -389,6 +412,10 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		a.fail(w, r, "ارائه‌دهنده در دسترس نیست", 409)
 		return
 	}
+	if _, er := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,13013))", b.ProviderID); er != nil {
+		a.fail(w, r, "بررسی ظرفیت انجام نشد", 500)
+		return
+	}
 	var capacity int
 	var providerID, day, prd string
 	var slotEnd time.Time
@@ -401,6 +428,18 @@ func (a *App) pay(w http.ResponseWriter, r *http.Request) {
 		if s.ID == b.AvailabilityID {
 			valid = true
 		}
+	}
+	if b.TimeFlow {
+		var free bool
+		if b.ExactTime == nil {
+			a.fail(w, r, "ساعت دقیق انتخاب نشده است", 409)
+			return
+		}
+		if e := tx.QueryRow(ctx, "SELECT booking_time_available($1,$2,$3,$4,$5)", b.ProviderID, b.AvailabilityID, b.ExactTime, b.DurationMinutes, b.ID).Scan(&free); e != nil || !free {
+			a.fail(w, r, "ساعت انتخابی دیگر آزاد نیست", 409)
+			return
+		}
+		used = 0
 	}
 	price, priceErr := a.price(ctx, b)
 	if b.RequestFlow {

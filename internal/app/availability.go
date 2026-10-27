@@ -17,7 +17,7 @@ func (a *App) slotTimes(s *Slot) {
 // Capacity includes paid reservations, while an existing booking keeps its own
 // reserved place when operations assigns an exact time in that same window.
 func (a *App) assignmentSlots(ctx context.Context, b Booking) ([]Slot, error) {
-	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND booking_holds_capacity(x.payment_status,x.status,x.stage_deadline)) FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$2 AND $3=ANY(p.species) AND ($2='vet' OR $4=ANY(p.areas)) AND ($2<>'vet' OR p.id=$5) AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND ((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')>now() AND a.capacity>(SELECT count(*) FROM bookings x WHERE x.availability_id=a.id AND x.id<>$1 AND booking_holds_capacity(x.payment_status,x.status,x.stage_deadline)) ORDER BY a.day,a.start_time,p.name,a.id`, b.ID, b.Service, b.Species, b.Area, b.ProviderID)
+	rows, e := a.DB.Query(ctx, `SELECT a.id,a.provider_id,p.name,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,booking_window_peak(a.id,$1) FROM availability a JOIN providers p ON p.id=a.provider_id WHERE p.active AND p.verified AND p.service=$2 AND $3=ANY(p.species) AND ($2='vet' OR $4=ANY(p.areas)) AND ($2<>'vet' OR p.id=$5) AND a.day<=(now() AT TIME ZONE 'Asia/Tehran')::date+90 AND ((a.day+a.end_time) AT TIME ZONE 'Asia/Tehran')>now() AND a.capacity>booking_window_peak(a.id,$1) ORDER BY a.day,a.start_time,p.name,a.id`, b.ID, b.Service, b.Species, b.Area, b.ProviderID)
 	if e != nil {
 		return nil, e
 	}
@@ -67,6 +67,10 @@ func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next 
 		return
 	}
 	defer tx.Rollback(ctx)
+	if _, e := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,13013))", id); e != nil {
+		a.fail(w, r, "بررسی ظرفیت انجام نشد", 500)
+		return
+	}
 	var valid bool
 	err = tx.QueryRow(ctx, "SELECT active AND verified FROM providers WHERE id=$1 FOR SHARE", id).Scan(&valid)
 	if err != nil || !valid {
@@ -80,7 +84,7 @@ func (a *App) saveAvailability(w http.ResponseWriter, r *http.Request, id, next 
 	}
 	var used int
 	if err == nil {
-		err = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND booking_holds_capacity(payment_status,status,stage_deadline)", slot).Scan(&used)
+		err = tx.QueryRow(ctx, "SELECT booking_window_peak($1,'')", slot).Scan(&used)
 	}
 	if err == nil && cap < used {
 		a.fail(w, r, "ظرفیت نمی‌تواند کمتر از رزروهای ثبت‌شده باشد؛ برای تغییر رزرو با عملیات هماهنگ کنید", 409)
@@ -139,6 +143,9 @@ func (a *App) assignedWindow(ctx context.Context, tx pgx.Tx, b Booking, r *http.
 	if e != nil || !active || !verified || svc != b.Service || !contains(species, b.Species) || (svc != "vet" && !contains(areas, b.Area)) {
 		return s, exact, "ارائه‌دهنده برای این درخواست صلاحیت یا پوشش ندارد", 400
 	}
+	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,13013))", selected); err != nil {
+		return s, exact, "بررسی ظرفیت انجام نشد", 500
+	}
 	if slotID == "" {
 		// Compatibility with existing clients: resolve a real registered window,
 		// never manufacture one from an arbitrary operator-entered time.
@@ -158,6 +165,10 @@ func (a *App) assignedWindow(ctx context.Context, tx pgx.Tx, b Booking, r *http.
 	e = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id<>$2 AND booking_holds_capacity(payment_status,status,stage_deadline)", s.ID, b.ID).Scan(&s.Used)
 	if e != nil || s.Used >= s.Capacity {
 		return s, exact, "ظرفیت این بازه پر یا بسته شده است؛ صفحه را تازه کنید و بازهٔ دیگری انتخاب کنید", 409
+	}
+	var free bool
+	if e = tx.QueryRow(ctx, "SELECT booking_time_available($1,$2,$3,$4,$5)", s.ProviderID, s.ID, exact, int(s.End.Sub(exact).Minutes()), b.ID).Scan(&free); e != nil || !free {
+		return s, exact, "ظرفیت این زمان با رزرو دیگری تداخل دارد", 409
 	}
 	if !exact.After(time.Now()) {
 		return s, exact, "زمان انتخابی گذشته است؛ ساعت آینده‌ای داخل بازه انتخاب کنید", 400

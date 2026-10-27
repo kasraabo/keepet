@@ -200,7 +200,7 @@ func (a *App) providerPanel(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		p.Next = providerID
 		p.Profile, _ = a.specialist(r.Context(), providerID)
-		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,(SELECT count(*) FROM bookings b WHERE b.availability_id=a.id AND booking_holds_capacity(b.payment_status,b.status,b.stage_deadline)) FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
+		slotRows, slotErr := a.DB.Query(r.Context(), `SELECT a.id,a.day::text,a.period,to_char(a.start_time,'HH24:MI'),to_char(a.end_time,'HH24:MI'),a.capacity,booking_window_peak(a.id,'') FROM availability a WHERE a.provider_id=$1 AND a.day>=(now() AT TIME ZONE 'Asia/Tehran')::date ORDER BY a.day,a.start_time LIMIT 360`, providerID)
 		if slotErr != nil {
 			a.fail(w, r, "بازه‌ها بارگذاری نشدند", 500)
 			return

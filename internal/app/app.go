@@ -496,11 +496,11 @@ func (a *App) providers(ctx context.Context, svc string) ([]Provider, error) {
 	return ps, rows.Err()
 }
 
-const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason"
+const bookingColumns = "id,session_token,COALESCE(owner_id,''),service,stage,pet_name,species,age,weight,answers,area,address,COALESCE(provider_id,''),COALESCE(availability_id,''),items,sample,consent,amount,status,payment_status,payment_key,created_at,paid_at,exact_time,meeting_url,prescription,result,COALESCE(replacement_id,''),refund_amount,refund_reason,refund_status,notes,wallet_cash_used,wallet_bonus_used,COALESCE(provider_due,amount-amount*commission_bps/10000),request_flow,requires_ops_approval,stage_deadline,request_reason,time_flow,COALESCE(duration_minutes,0)"
 
 func scanBooking(row pgx.Row) (Booking, error) {
 	var b Booking
-	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason)
+	err := row.Scan(&b.ID, &b.SessionToken, &b.OwnerID, &b.Service, &b.Stage, &b.PetName, &b.Species, &b.Age, &b.Weight, &b.Answers, &b.Area, &b.Address, &b.ProviderID, &b.AvailabilityID, &b.Items, &b.Sample, &b.Consent, &b.Amount, &b.Status, &b.PaymentStatus, &b.PaymentKey, &b.CreatedAt, &b.PaidAt, &b.ExactTime, &b.MeetingURL, &b.Prescription, &b.Result, &b.ReplacementID, &b.RefundAmount, &b.RefundReason, &b.RefundStatus, &b.Notes, &b.WalletCashUsed, &b.WalletBonusUsed, &b.ProviderDue, &b.RequestFlow, &b.RequiresOpsApproval, &b.StageDeadline, &b.RequestReason, &b.TimeFlow, &b.DurationMinutes)
 	return b, err
 }
 func (a *App) getBooking(r *http.Request) (Booking, error) {

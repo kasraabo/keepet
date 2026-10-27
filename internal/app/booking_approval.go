@@ -209,7 +209,7 @@ func (a *App) submitRequest(w http.ResponseWriter, r *http.Request) {
 	slots, err := a.slots(ctx, b)
 	valid := false
 	for _, s := range slots {
-		if s.ID == b.AvailabilityID {
+		if s.ID == b.AvailabilityID && (!b.TimeFlow || (b.ExactTime != nil && s.Start.Equal(*b.ExactTime))) {
 			valid = true
 		}
 	}
@@ -237,7 +237,7 @@ func (a *App) submitRequest(w http.ResponseWriter, r *http.Request) {
 		state = "pending_ops"
 		minutes = config["ops_minutes"]
 	}
-	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,submitted_at=now(),requires_ops_approval=$3,approval_policy=$4,stage_deadline=now()+$5*interval '1 minute',provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE NULL END,provider_due=$6,commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID, state, need, policy, minutes, q.Base)
+	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,submitted_at=now(),requires_ops_approval=$3,approval_policy=$4,stage_deadline=CASE WHEN time_flow THEN LEAST(exact_time,now()+$5*interval '1 minute') ELSE now()+$5*interval '1 minute' END,provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE NULL END,provider_due=$6,commission_bps=COALESCE((SELECT (data->>'commission')::integer FROM business_config WHERE kind='service' AND id=bookings.service),0) WHERE id=$1", b.ID, state, need, policy, minutes, q.Base)
 	if e == nil {
 		e = requestEvent(ctx, tx, b, sess(r).User.ID, state, "درخواست ثبت شد؛ پرداخت پس از تأیید متخصص انجام می‌شود.")
 	}
@@ -280,7 +280,7 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "retry" && own && contains([]string{"request_rejected", "request_expired", "request_cancelled"}, b.Status) {
 		id := token()
-		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
+		_, e = tx.Exec(ctx, `INSERT INTO bookings(id,session_token,owner_id,service,stage,pet_name,species,age,weight,answers,area,address,items,sample,consent,payment_key,request_flow,time_flow) SELECT $2,$3,owner_id,service,2,pet_name,species,age,weight,answers,area,address,items,sample,consent,$4,true,true FROM bookings WHERE id=$1`, b.ID, id, sess(r).Token, token())
 		if e == nil {
 			e = tx.Commit(ctx)
 		}
@@ -329,11 +329,37 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 			fail("متخصص یا محدودهٔ خدمت در دسترس نیست", 409)
 			return
 		}
+		if _, er := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1,13013))", b.ProviderID); er != nil {
+			fail("بررسی ظرفیت انجام نشد", 500)
+			return
+		}
 		var capacity, used int
 		var end time.Time
 		e = tx.QueryRow(ctx, "SELECT capacity,(day+end_time) AT TIME ZONE 'Asia/Tehran' FROM availability WHERE id=$1 FOR UPDATE", b.AvailabilityID).Scan(&capacity, &end)
 		if e == nil {
 			e = tx.QueryRow(ctx, "SELECT count(*) FROM bookings WHERE availability_id=$1 AND id<>$2 AND booking_holds_capacity(payment_status,status,stage_deadline)", b.AvailabilityID, b.ID).Scan(&used)
+		}
+		if b.TimeFlow && e == nil {
+			var free bool
+			if b.ExactTime == nil {
+				fail("ساعت انتخاب نشده است", 409)
+				return
+			}
+			e = tx.QueryRow(ctx, "SELECT booking_time_available($1,$2,$3,$4,$5)", b.ProviderID, b.AvailabilityID, b.ExactTime, b.DurationMinutes, b.ID).Scan(&free)
+			if !free {
+				used = capacity
+			} else {
+				used = 0
+			}
+		}
+		if !b.TimeFlow && e == nil {
+			var free bool
+			e = tx.QueryRow(ctx, `SELECT booking_time_available($1,$2,GREATEST((day+start_time) AT TIME ZONE 'Asia/Tehran',date_trunc('minute',now())+interval '1 minute'),(extract(epoch FROM (((day+end_time) AT TIME ZONE 'Asia/Tehran')-GREATEST((day+start_time) AT TIME ZONE 'Asia/Tehran',date_trunc('minute',now())+interval '1 minute')))/60)::integer,$3) FROM availability WHERE id=$2`, b.ProviderID, b.AvailabilityID, b.ID).Scan(&free)
+			if !free {
+				used = capacity
+			} else {
+				used = 0
+			}
 		}
 		if e != nil || used >= capacity || !end.After(time.Now()) {
 			fail("زمان انتخابی دیگر ظرفیت ندارد؛ درخواست قابل پذیرش نیست", 409)
@@ -346,7 +372,7 @@ func (a *App) requestAction(w http.ResponseWriter, r *http.Request) {
 		fail("این اقدام برای نقش یا مرحلهٔ شما مجاز نیست", 403)
 		return
 	}
-	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,stage_deadline=CASE WHEN $3>0 THEN now()+$3*interval '1 minute' ELSE NULL END,provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE provider_requested_at END,request_reason=$4 WHERE id=$1", b.ID, next, minutes, reason)
+	_, e = tx.Exec(ctx, "UPDATE bookings SET status=$2,stage_deadline=CASE WHEN $3>0 THEN CASE WHEN time_flow THEN LEAST(exact_time,now()+$3*interval '1 minute') ELSE now()+$3*interval '1 minute' END ELSE NULL END,provider_requested_at=CASE WHEN $2='pending_provider' THEN now() ELSE provider_requested_at END,request_reason=$4 WHERE id=$1", b.ID, next, minutes, reason)
 	if e == nil {
 		e = requestEvent(ctx, tx, b, actor.ID, next, reason)
 	}
