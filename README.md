@@ -116,3 +116,5 @@ make generate # بازتولید پوستهٔ templ؛ فایل generated در ر
 راهنمای مرحلهٔ جدید: [زیرخدمات، عملیات، تماس و ورودی فارسی](docs/service-management-interface.md).
 
 اعلان‌های مالی، پشتیبانی و تحریریه: [راهنما](docs/account-notifications.md). بستهٔ نصب آزمایشی و بازگشت به نسخهٔ قبلی با حفظ دیتابیس جدید: [آمادگی نسخه و بازگشت](docs/release-readiness.md).
+
+گزارش ارائه به تیم، شامل امکانات پیاده‌شده، تست‌ها و کارهای باقی‌مانده: [PDF فارسی ۲۰ صفحه‌ای](docs/keepet-implementation-report-fa.pdf) · [نسخهٔ HTML مستقل](docs/keepet-implementation-report-fa.html). بازسازی: `python3 scripts/build-implementation-report.py` سپس `node scripts/build-implementation-report.cjs`.
