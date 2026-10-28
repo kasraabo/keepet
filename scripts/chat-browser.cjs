@@ -20,7 +20,7 @@ const assert = (test, message) => { if (!test) throw Error(message); };
     await page.locator('[name=code]').fill((await page.locator('[data-dev-code]').innerText()).trim());
     if(await page.locator('[name=terms]').count()) await page.locator('[name=terms]').check();
     await page.locator('form[action="/auth/verify"] button').click();
-    if(!manager&&phone!=='09120000002'){await page.waitForURL('**/profile?next=*');await page.locator('[name=full_name]').fill('مشتری آزمایشی');await page.locator('form[action="/profile"] button').click()}
+    if(!manager&&phone!=='09120000002'){await page.waitForURL('**/profile?next=*');await page.locator('[name=full_name]').fill('مشتری آزمایشی');await page.locator('form[action="/profile"] button[type="submit"], form[action="/profile"] button:not([type])').click()}
     await page.waitForURL(manager?'**/management':phone==='09120000002'?'**/provider':'**/dashboard');
     return {context,page};
   }

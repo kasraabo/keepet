@@ -1,0 +1,107 @@
+{
+  "scope": "local isolated development only; no public deployment",
+  "schema_upgrade": "11 -> 21",
+  "code_and_browser_result": "PASS",
+  "checks": [
+    {
+      "name": "deployment failure paths and shell syntax",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "Go tests and race detector",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "go vet",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "vendored server build",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "approval browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "scheduling browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "fulfillment browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "laboratory browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "PostgreSQL backup and restore rehearsal",
+      "state": "PASS",
+      "detail": "58 tables: identical counts and row digests; restored app healthy"
+    },
+    {
+      "name": "coordination browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "chat browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "followups browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "onboarding browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "google browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "editorial browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "services browser",
+      "state": "PASS",
+      "detail": ""
+    },
+    {
+      "name": "notifications browser",
+      "state": "PASS",
+      "detail": ""
+    }
+  ],
+  "docker_rollback": {
+    "result": "PASS",
+    "upgrade": "11 -> 21",
+    "rollback": "21 -> isolated 11",
+    "newer_records": "preserved in original database and safety dump",
+    "private_key": "matching",
+    "corrupt_backup": "rejected before cutover",
+    "failed_rollback": "current app safely resumed on untouched database"
+  },
+  "final_targeted_checks": {
+    "deployment_failure_tests": 6,
+    "result": "PASS",
+    "includes": "Interrupted/incomplete backups, checksum inventory, partial Compose start, dirty migration state, successful update"
+  },
+  "public_site_changed": false
+}

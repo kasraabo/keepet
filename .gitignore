@@ -3,3 +3,9 @@
 /node_modules/
 *.log
 /test-results/
+
+# Active recovery pointer is local deployment state, never release source.
+.keepet-recovery
+.keepet-recovery.tmp
+
+__pycache__/
